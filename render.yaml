@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: metanalisis-backend
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase:
+          name: metanalisis-db
+          property: connectionString
+      - key: ANTHROPIC_API_KEY
+        sync: false          # you set this manually in Render dashboard
+      - key: ALLOWED_ORIGINS
+        sync: false          # set to your Cloudflare Pages URL, e.g. https://metanalisis.pages.dev
+    healthCheckPath: /health
+    autoDeploy: true
+
+databases:
+  - name: metanalisis-db
+    databaseName: metanalisis
+    user: metanalisis_user
+    plan: free
