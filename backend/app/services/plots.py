@@ -62,12 +62,15 @@ def _forest_plot_inner(result: MetaResult, title: str,
     y_positions = list(range(k, 0, -1))
     colors = {"low": "#2ecc71", "some_concerns": "#f39c12", "high": "#e74c3c"}
 
-    # Column headers
-    ax.text(0, k + 1.5, "Study", fontsize=9, fontweight="bold", ha="left", va="center")
-    ax.text(0.62, k + 1.5, f"{result.effect_measure} (95% CI)", fontsize=9,
-            fontweight="bold", ha="center", va="center", transform=ax.transAxes)
-    ax.text(0.90, k + 1.5, "Weight (%)", fontsize=9, fontweight="bold",
-            ha="center", va="center", transform=ax.transAxes)
+    # Column headers — use get_yaxis_transform (x=axes fraction, y=data coords)
+    ax.text(-0.02, k + 1.5, "Study", fontsize=9, fontweight="bold", ha="right", va="center",
+            transform=ax.get_yaxis_transform())
+    ax.text(1.01, k + 1.5, f"{result.effect_measure} (95% CI)", fontsize=9,
+            fontweight="bold", ha="left", va="center",
+            transform=ax.get_yaxis_transform())
+    ax.text(1.25, k + 1.5, "Weight (%)", fontsize=9, fontweight="bold",
+            ha="right", va="center",
+            transform=ax.get_yaxis_transform())
 
     # X-axis limits
     all_vals = []
@@ -461,10 +464,9 @@ def generate_rob_traffic_light(studies_rob: list) -> str:
 
 
 def generate_grade_table(result_dict: dict, studies: list, outcome: str = "") -> str:
-    """Generate a GRADE evidence profile table as base64 PNG."""
+    """Generate a GRADE evidence profile as a vertical two-column card layout."""
     plt.close("all")
     gc.collect()
-    import math as _math
 
     het = result_dict.get("heterogeneity", {}) or {}
     pooled = result_dict.get("pooled", {}) or {}
@@ -476,13 +478,12 @@ def generate_grade_table(result_dict: dict, studies: list, outcome: str = "") ->
     ci_hi = pooled.get("ci_upper")
     em = result_dict.get("effect_measure", "ES")
 
-    # --- Auto-rate GRADE domains ---
-    # Risk of bias: count RoB fields
+    # Auto-rate GRADE domains
     high_risk = sum(
         1 for s in studies
-        for k_ in ["rob_random_sequence","rob_allocation_concealment",
-                   "rob_blinding_participants","rob_blinding_outcome",
-                   "rob_incomplete_data","rob_selective_reporting"]
+        for k_ in ["rob_random_sequence", "rob_allocation_concealment",
+                   "rob_blinding_participants", "rob_blinding_outcome",
+                   "rob_incomplete_data", "rob_selective_reporting"]
         if s.get(k_) == "high"
     )
     if high_risk == 0:
@@ -492,7 +493,6 @@ def generate_grade_table(result_dict: dict, studies: list, outcome: str = "") ->
     else:
         rob_rating, rob_color = "Very serious", "#e74c3c"
 
-    # Inconsistency (I²)
     if i2 < 25:
         incon_rating, incon_color = "Not serious", "#27ae60"
     elif i2 < 50:
@@ -500,13 +500,10 @@ def generate_grade_table(result_dict: dict, studies: list, outcome: str = "") ->
     else:
         incon_rating, incon_color = "Very serious", "#e74c3c"
 
-    # Indirectness (manual → default)
     indir_rating, indir_color = "Not serious", "#27ae60"
 
-    # Imprecision: CI width relative to effect
     if effect and ci_lo is not None and ci_hi is not None and effect != 0:
-        ci_width = ci_hi - ci_lo
-        rel_width = abs(ci_width / effect) if effect else 999
+        rel_width = abs((ci_hi - ci_lo) / effect)
         if rel_width < 0.5 and total_n >= 300:
             impr_rating, impr_color = "Not serious", "#27ae60"
         elif rel_width < 1.0 or total_n >= 100:
@@ -516,22 +513,15 @@ def generate_grade_table(result_dict: dict, studies: list, outcome: str = "") ->
     else:
         impr_rating, impr_color = "Serious", "#f39c12"
 
-    # Publication bias
-    if k >= 10:
-        pub_rating, pub_color = "Undetected", "#27ae60"
-    elif k >= 5:
-        pub_rating, pub_color = "Undetected", "#27ae60"
-    else:
-        pub_rating, pub_color = "Undetected*", "#f39c12"
+    pub_rating, pub_color = ("Undetected", "#27ae60") if k >= 5 else ("Undetected*", "#f39c12")
 
-    # Overall quality
     downgrades = sum([
         1 if rob_rating == "Serious" else (2 if rob_rating == "Very serious" else 0),
         1 if incon_rating == "Serious" else (2 if incon_rating == "Very serious" else 0),
-        1 if indir_rating == "Serious" else (2 if indir_rating == "Very serious" else 0),
+        0,  # indirectness = not serious
         1 if impr_rating == "Serious" else (2 if impr_rating == "Very serious" else 0),
     ])
-    quality_labels = ["⊕⊕⊕⊕ HIGH", "⊕⊕⊕◯ MODERATE", "⊕⊕◯◯ LOW", "⊕◯◯◯ VERY LOW"]
+    quality_labels = ["⊕⊕⊕⊕  HIGH", "⊕⊕⊕◯  MODERATE", "⊕⊕◯◯  LOW", "⊕◯◯◯  VERY LOW"]
     quality_colors = ["#27ae60", "#2980b9", "#f39c12", "#e74c3c"]
     q_idx = min(downgrades, 3)
     quality_label = quality_labels[q_idx]
@@ -539,68 +529,94 @@ def generate_grade_table(result_dict: dict, studies: list, outcome: str = "") ->
 
     effect_str = "—"
     if effect is not None and ci_lo is not None and ci_hi is not None:
-        effect_str = f"{em} {effect:.2f} (95% CI {ci_lo:.2f}–{ci_hi:.2f})"
+        effect_str = f"{em} {effect:.2f}  (95% CI  {ci_lo:.2f} – {ci_hi:.2f})"
 
-    # --- Build figure ---
-    fig, ax = plt.subplots(figsize=(14, 4.5))
+    # ── Draw figure ───────────────────────────────────────────────────────────
+    FIG_W, FIG_H = 12.0, 8.2
+    fig = plt.figure(figsize=(FIG_W, FIG_H), facecolor="white")
+    ax = fig.add_axes([0, 0, 1, 1])
+    ax.set_xlim(0, FIG_W)
+    ax.set_ylim(0, FIG_H)
     ax.axis("off")
 
-    cols = ["Outcome", "Studies (k)", "Participants (N)", "Risk of\nbias",
-            "Inconsistency\n(I²)", "Indirectness", "Imprecision",
-            "Publication\nbias", "GRADE\nCertainty", "Effect estimate"]
-    row = [
-        outcome or "Primary outcome",
-        str(k),
-        str(total_n),
-        rob_rating,
-        f"{incon_rating}\n(I²={i2:.0f}%)",
-        indir_rating,
-        impr_rating,
-        pub_rating,
-        quality_label,
-        effect_str,
+    # Title
+    ax.text(FIG_W / 2, FIG_H - 0.25,
+            "GRADE Evidence Profile — Certainty of Evidence",
+            ha="center", va="top", fontsize=13, fontweight="bold", color="#1a3a5c")
+    ax.text(FIG_W / 2, FIG_H - 0.72,
+            outcome or "Primary outcome",
+            ha="center", va="top", fontsize=11, style="italic", color="#444444")
+
+    # Layout constants
+    X_L = 0.3          # left edge of label column
+    W_L = 4.2          # label column width
+    X_V = X_L + W_L + 0.2   # left edge of value column
+    W_V = FIG_W - X_V - 0.3  # value column width
+    ROW_H = 0.68        # height per row
+    Y_START = FIG_H - 1.35  # y of TOP of first row
+
+    def _row(y_top, label, value, val_bg, label_bg="#1a3a5c", label_fg="white", val_fg="#111111"):
+        y = y_top - ROW_H
+        ax.add_patch(mpatches.FancyBboxPatch(
+            (X_L, y + 0.04), W_L, ROW_H - 0.08,
+            boxstyle="round,pad=0.04", facecolor=label_bg, edgecolor="none", zorder=2))
+        ax.text(X_L + W_L / 2, y + ROW_H / 2, label,
+                ha="center", va="center", fontsize=9.5, fontweight="bold",
+                color=label_fg, multialignment="center", zorder=3)
+
+        ax.add_patch(mpatches.FancyBboxPatch(
+            (X_V, y + 0.04), W_V, ROW_H - 0.08,
+            boxstyle="round,pad=0.04", facecolor=val_bg, edgecolor="#cccccc",
+            linewidth=0.8, zorder=2))
+        ax.text(X_V + W_V / 2, y + ROW_H / 2, value,
+                ha="center", va="center", fontsize=10, color=val_fg,
+                multialignment="center", zorder=3)
+        return y  # returns bottom y of this row
+
+    rows = [
+        ("Studies (k)  /  Participants (N)",
+         f"{k} studies     N = {total_n}",
+         "#eef2fb"),
+        ("Effect estimate",
+         effect_str,
+         "#eef2fb"),
+        ("Risk of bias",
+         rob_rating,
+         rob_color + "33"),
+        (f"Inconsistency  (I² = {i2:.0f}%)",
+         incon_rating,
+         incon_color + "33"),
+        ("Indirectness",
+         indir_rating,
+         indir_color + "33"),
+        ("Imprecision",
+         impr_rating,
+         impr_color + "33"),
+        ("Publication bias",
+         pub_rating,
+         pub_color + "33"),
     ]
-    # cellColours must match cellText shape: (n_data_rows, n_cols) = (1, 10)
-    cell_colors = [[
-        "#f0f4ff",           # outcome
-        "#f0f4ff",           # k
-        "#f0f4ff",           # N
-        rob_color + "55",
-        incon_color + "55",
-        indir_color + "55",
-        impr_color + "55",
-        pub_color + "55",
-        quality_color + "44",
-        "#f0f4ff",           # effect estimate
-    ]]
 
-    tbl = ax.table(
-        cellText=[row],
-        colLabels=cols,
-        cellLoc="center",
-        loc="center",
-        cellColours=cell_colors,
-    )
-    tbl.auto_set_font_size(False)
-    tbl.set_fontsize(9)
-    tbl.scale(1, 3.5)
+    y_cursor = Y_START
+    for label, value, val_bg in rows:
+        y_cursor = _row(y_cursor, label, value, val_bg)
 
-    for (r, c), cell in tbl.get_celld().items():
-        cell.set_edgecolor("#cccccc")
-        if r == 0:
-            cell.set_facecolor("#1a3a5c")
-            cell.set_text_props(color="white", fontweight="bold", fontsize=8.5)
+    # GRADE certainty summary strip
+    grade_y = y_cursor - 0.18
+    ax.add_patch(mpatches.FancyBboxPatch(
+        (X_L, grade_y), W_L + 0.2 + W_V, 0.78,
+        boxstyle="round,pad=0.06", facecolor=quality_color,
+        edgecolor="#333333", linewidth=1.5, zorder=2))
+    ax.text(FIG_W / 2, grade_y + 0.39,
+            f"GRADE Certainty of Evidence:   {quality_label}",
+            ha="center", va="center", fontsize=13, fontweight="bold",
+            color="white", zorder=3)
 
-    ax.set_title(
-        "GRADE Evidence Profile — Certainty of Evidence",
-        fontsize=12, fontweight="bold", pad=14, color="#1a3a5c",
-    )
-    fig.text(
-        0.01, 0.02,
-        "* <10 studies — publication bias assessment limited  |  "
-        "Indirectness rated manually (default: Not serious)  |  "
-        "GRADE: Grading of Recommendations Assessment, Development and Evaluation",
-        fontsize=6.5, color="#666666",
-    )
-    plt.tight_layout(rect=[0, 0.06, 1, 1])
+    # Footer note
+    ax.text(0.25, 0.18,
+            "* <5 studies — publication bias assessment limited  |  "
+            "Indirectness default: Not serious (manual upgrade/downgrade as needed)  |  "
+            "GRADE: Grading of Recommendations Assessment, Development and Evaluation",
+            fontsize=6.8, color="#888888", ha="left", va="bottom")
+
     return _b64(fig)

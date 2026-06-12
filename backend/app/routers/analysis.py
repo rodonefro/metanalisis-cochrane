@@ -113,17 +113,16 @@ def get_forest_plot(review_id: int, db: Session = Depends(get_db)):
     analysis = _get_latest_or_404(review_id, db)
     result_dict = json.loads(analysis.results_json)
 
-    # Reuse cached image or regenerate
-    if analysis.forest_plot_b64:
-        b64 = analysis.forest_plot_b64
-    else:
-        try:
-            result = meta_result_from_dict(result_dict)
-            b64 = generate_forest_plot(result, title=review.title or "Forest Plot")
-            analysis.forest_plot_b64 = b64
-            db.commit()
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"Error generating forest plot: {exc}")
+    # Always regenerate (ensures fresh output, bypasses any stale cache)
+    try:
+        result = meta_result_from_dict(result_dict)
+        b64 = generate_forest_plot(result, title=review.title or "Forest Plot")
+        if not b64:
+            raise ValueError("generate_forest_plot returned empty result")
+        analysis.forest_plot_b64 = b64
+        db.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error generating forest plot: {exc}")
 
     # AI interpretation (always fresh, non-fatal)
     interpretation = ""
@@ -145,16 +144,15 @@ def get_funnel_plot(review_id: int, db: Session = Depends(get_db)):
     analysis = _get_latest_or_404(review_id, db)
     result_dict = json.loads(analysis.results_json)
 
-    if analysis.funnel_plot_b64:
-        b64 = analysis.funnel_plot_b64
-    else:
-        try:
-            result = meta_result_from_dict(result_dict)
-            b64 = generate_funnel_plot(result, title="Funnel Plot")
-            analysis.funnel_plot_b64 = b64
-            db.commit()
-        except Exception as exc:
-            raise HTTPException(status_code=500, detail=f"Error generating funnel plot: {exc}")
+    try:
+        result = meta_result_from_dict(result_dict)
+        b64 = generate_funnel_plot(result, title="Funnel Plot")
+        if not b64:
+            raise ValueError("generate_funnel_plot returned empty result")
+        analysis.funnel_plot_b64 = b64
+        db.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error generating funnel plot: {exc}")
 
     interpretation = ""
     try:
