@@ -7,7 +7,7 @@ from ..database import get_db
 from ..models import Review, Study, Analysis
 from ..schemas import AnalysisOut
 from ..services.statistics import run_meta_analysis, result_to_dict
-from ..services.plots import generate_forest_plot, generate_funnel_plot, generate_rob_traffic_light, generate_prisma_2020, generate_grade_table
+from ..services.plots import generate_forest_plot, generate_funnel_plot, generate_rob_traffic_light, generate_prisma_2020, generate_grade_table  # used by on-demand endpoints
 from ..services.ai_generator import generate_prisma_autofill
 
 router = APIRouter(prefix="/reviews/{review_id}/analysis", tags=["analysis"])
@@ -45,28 +45,18 @@ def run_analysis(review_id: int, db: Session = Depends(get_db)):
             raise HTTPException(status_code=422, detail=str(exc2))
 
     result_dict = result_to_dict(result)
-    try:
-        forest_b64 = generate_forest_plot(result, title=review.title or "Forest Plot")
-    except Exception:
-        forest_b64 = None
-    try:
-        funnel_b64 = generate_funnel_plot(result, title="Funnel Plot")
-    except Exception:
-        funnel_b64 = None
-    try:
-        rob_b64 = generate_rob_traffic_light(study_data)
-    except Exception:
-        rob_b64 = None
 
+    # Plots are generated on-demand via /forest, /funnel, /grade endpoints
+    # to avoid OOM — do NOT generate them here
     analysis = Analysis(
         review_id=review_id,
         name=f"Analysis {datetime.utcnow().strftime('%Y-%m-%d %H:%M')}",
         effect_measure=effect_measure,
         model_type=model_type,
         results_json=json.dumps(result_dict),
-        forest_plot_b64=forest_b64,
-        funnel_plot_b64=funnel_b64,
-        rob_plot_b64=rob_b64,
+        forest_plot_b64=None,
+        funnel_plot_b64=None,
+        rob_plot_b64=None,
     )
     db.add(analysis)
     db.commit()
