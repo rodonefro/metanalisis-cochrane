@@ -515,6 +515,120 @@ def extract_quantitative_data(review: dict, studies: list[dict]) -> dict:
     return results
 
 
+def interpret_forest_plot(review: dict, result_dict: dict) -> str:
+    """Auto-interpretation of forest plot results in Spanish (Haiku, fast)."""
+    p = result_dict.get("pooled", {})
+    h = result_dict.get("heterogeneity", {})
+    em = result_dict.get("effect_measure", "ES")
+    model = result_dict.get("model", "random")
+    k = result_dict.get("k", 0)
+    total_n = result_dict.get("total_n", 0)
+    pi = result_dict.get("prediction_interval", {}) or {}
+    studies = result_dict.get("studies", [])
+
+    study_lines = "\n".join(
+        f"  {s['label']}: {em}={s.get('effect', 0):.2f} "
+        f"[{s.get('ci_lower', 0):.2f}, {s.get('ci_upper', 0):.2f}], "
+        f"peso={s.get('weight_re' if model == 'random' else 'weight_fe', 0):.1f}%"
+        for s in studies[:20]
+    )
+    pi_text = ""
+    if pi.get("lower") is not None:
+        pi_text = f"\nIntervalo de predicción: [{pi['lower']:.2f}, {pi['upper']:.2f}]"
+
+    user = (
+        f"REVISIÓN: {review.get('title', '')}\n"
+        f"Población: {review.get('population', '')} | Intervención: {review.get('intervention', '')}\n\n"
+        f"RESULTADOS (modelo {model}, k={k}, N={total_n}):\n"
+        f"  {em} combinado: {p.get('effect', 0):.2f} [IC95% {p.get('ci_lower', 0):.2f}–{p.get('ci_upper', 0):.2f}]\n"
+        f"  I²={h.get('I2', 0):.0f}%, Q={h.get('Q', 0):.1f} (p={h.get('Q_pvalue', 1):.3f}), τ²={h.get('tau2', 0):.4f}"
+        f"{pi_text}\n\n"
+        f"Estudios individuales:\n{study_lines}\n\n"
+        "Escribe en ESPAÑOL una interpretación concisa del diagrama de bosque (250–350 palabras), estilo Cochrane:\n"
+        "1) Estimación agrupada: magnitud, dirección, significado clínico del IC95%.\n"
+        "2) Estudios que más contribuyen al resultado y por qué.\n"
+        "3) Heterogeneidad: nivel de I², implicaciones, posibles fuentes.\n"
+        "4) Intervalo de predicción si disponible.\n"
+        "5) Conclusión estadística general."
+    )
+    client = _get_client()
+    msg = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=1024,
+        system=SYSTEM_COCHRANE,
+        messages=[{"role": "user", "content": user}],
+    )
+    return msg.content[0].text.strip()
+
+
+def interpret_funnel_plot(review: dict, result_dict: dict) -> str:
+    """Auto-interpretation of funnel plot in Spanish (Haiku, fast)."""
+    p = result_dict.get("pooled", {})
+    h = result_dict.get("heterogeneity", {})
+    em = result_dict.get("effect_measure", "ES")
+    k = result_dict.get("k", 0)
+    user = (
+        f"REVISIÓN: {review.get('title', '')}\n"
+        f"k={k} estudios, {em} combinado={p.get('effect', 0):.2f} "
+        f"[{p.get('ci_lower', 0):.2f}–{p.get('ci_upper', 0):.2f}], "
+        f"I²={h.get('I2', 0):.0f}%\n\n"
+        "Escribe en ESPAÑOL una interpretación del gráfico de embudo (150–200 palabras), estilo Cochrane: "
+        "simetría o asimetría observada, lo que implica sobre el sesgo de publicación, "
+        "referencia a la prueba de Egger si el número de estudios lo permite (k≥10), "
+        "y qué significa para la validez de las conclusiones del metaanálisis."
+    )
+    client = _get_client()
+    msg = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=512,
+        system=SYSTEM_COCHRANE,
+        messages=[{"role": "user", "content": user}],
+    )
+    return msg.content[0].text.strip()
+
+
+def interpret_grade_table(review: dict, result_dict: dict, studies: list) -> str:
+    """Auto-interpretation of GRADE evidence table in Spanish (Haiku, fast)."""
+    p = result_dict.get("pooled", {})
+    h = result_dict.get("heterogeneity", {})
+    em = result_dict.get("effect_measure", "ES")
+    k = result_dict.get("k", 0)
+    total_n = result_dict.get("total_n", 0)
+    i2 = h.get("I2", 0)
+    effect = p.get("effect")
+    ci_lo = p.get("ci_lower")
+    ci_hi = p.get("ci_upper")
+    effect_str = f"{em}={effect:.2f} (IC95% {ci_lo:.2f}–{ci_hi:.2f})" if effect is not None else "no disponible"
+
+    high_risk = sum(
+        1 for s in studies
+        for rob_key in [
+            "rob_random_sequence", "rob_allocation_concealment",
+            "rob_blinding_participants", "rob_blinding_outcome",
+            "rob_incomplete_data", "rob_selective_reporting",
+        ]
+        if s.get(rob_key) == "high"
+    )
+
+    user = (
+        f"REVISIÓN: {review.get('title', '')}\n"
+        f"k={k} estudios, N={total_n}, {effect_str}, I²={i2:.0f}%, "
+        f"dominios con alto riesgo de sesgo: {high_risk}\n\n"
+        "Escribe en ESPAÑOL una interpretación de la tabla GRADE de certeza de la evidencia (200–250 palabras): "
+        "nivel de certeza alcanzado (ALTA/MODERADA/BAJA/MUY BAJA), principales razones de degradación "
+        "(riesgo de sesgo, inconsistencia, indirectness, imprecisión, sesgo de publicación), "
+        "implicaciones clínicas del nivel de certeza y recomendaciones para la práctica."
+    )
+    client = _get_client()
+    msg = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=768,
+        system=SYSTEM_COCHRANE,
+        messages=[{"role": "user", "content": user}],
+    )
+    return msg.content[0].text.strip()
+
+
 def generate_prisma_autofill(review: dict, study_count: int) -> dict:
     """Use AI to generate realistic PRISMA 2020 flow numbers based on PICO and included studies."""
     import json, re

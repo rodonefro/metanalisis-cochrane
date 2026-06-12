@@ -8,7 +8,10 @@ from ..models import Review, Study, Analysis
 from ..schemas import AnalysisOut
 from ..services.statistics import run_meta_analysis, result_to_dict, meta_result_from_dict
 from ..services.plots import generate_forest_plot, generate_funnel_plot, generate_rob_traffic_light, generate_prisma_2020, generate_grade_table  # used by on-demand endpoints
-from ..services.ai_generator import generate_prisma_autofill, screen_studies_with_ai, extract_quantitative_data
+from ..services.ai_generator import (
+    generate_prisma_autofill, screen_studies_with_ai, extract_quantitative_data,
+    interpret_forest_plot, interpret_funnel_plot, interpret_grade_table,
+)
 
 router = APIRouter(prefix="/reviews/{review_id}/analysis", tags=["analysis"])
 
@@ -103,55 +106,89 @@ def _get_latest_or_404(review_id: int, db: Session):
 
 @router.get("/forest")
 def get_forest_plot(review_id: int, db: Session = Depends(get_db)):
-    """Return (or regenerate) the forest plot for the latest analysis."""
+    """Return (or regenerate) the forest plot + AI interpretation."""
     review = db.query(Review).filter(Review.id == review_id).first()
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")
     analysis = _get_latest_or_404(review_id, db)
+    result_dict = json.loads(analysis.results_json)
+
+    # Reuse cached image or regenerate
     if analysis.forest_plot_b64:
-        return {"forest_b64": analysis.forest_plot_b64}
+        b64 = analysis.forest_plot_b64
+    else:
+        try:
+            result = meta_result_from_dict(result_dict)
+            b64 = generate_forest_plot(result, title=review.title or "Forest Plot")
+            analysis.forest_plot_b64 = b64
+            db.commit()
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Error generating forest plot: {exc}")
+
+    # AI interpretation (always fresh, non-fatal)
+    interpretation = ""
     try:
-        result_dict = json.loads(analysis.results_json)
-        result = meta_result_from_dict(result_dict)
-        b64 = generate_forest_plot(result, title=review.title or "Forest Plot")
-        analysis.forest_plot_b64 = b64
-        db.commit()
-        return {"forest_b64": b64}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error generating forest plot: {exc}")
+        review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
+        interpretation = interpret_forest_plot(review_dict, result_dict)
+    except Exception:
+        pass
+
+    return {"forest_b64": b64, "interpretation": interpretation}
 
 
 @router.get("/funnel")
 def get_funnel_plot(review_id: int, db: Session = Depends(get_db)):
-    """Return (or regenerate) the funnel plot for the latest analysis."""
-    analysis = _get_latest_or_404(review_id, db)
-    if analysis.funnel_plot_b64:
-        return {"funnel_b64": analysis.funnel_plot_b64}
-    try:
-        result_dict = json.loads(analysis.results_json)
-        result = meta_result_from_dict(result_dict)
-        b64 = generate_funnel_plot(result, title="Funnel Plot")
-        analysis.funnel_plot_b64 = b64
-        db.commit()
-        return {"funnel_b64": b64}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error generating funnel plot: {exc}")
-
-
-@router.get("/grade")
-def get_grade_table(review_id: int, db: Session = Depends(get_db)):
-    """Generate a GRADE evidence profile table."""
+    """Return (or regenerate) the funnel plot + AI interpretation."""
     review = db.query(Review).filter(Review.id == review_id).first()
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")
     analysis = _get_latest_or_404(review_id, db)
+    result_dict = json.loads(analysis.results_json)
+
+    if analysis.funnel_plot_b64:
+        b64 = analysis.funnel_plot_b64
+    else:
+        try:
+            result = meta_result_from_dict(result_dict)
+            b64 = generate_funnel_plot(result, title="Funnel Plot")
+            analysis.funnel_plot_b64 = b64
+            db.commit()
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Error generating funnel plot: {exc}")
+
+    interpretation = ""
     try:
-        result_dict = json.loads(analysis.results_json)
-        studies = _study_dicts(review_id, db)
+        review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
+        interpretation = interpret_funnel_plot(review_dict, result_dict)
+    except Exception:
+        pass
+
+    return {"funnel_b64": b64, "interpretation": interpretation}
+
+
+@router.get("/grade")
+def get_grade_table(review_id: int, db: Session = Depends(get_db)):
+    """Generate a GRADE evidence profile table + AI interpretation."""
+    review = db.query(Review).filter(Review.id == review_id).first()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+    analysis = _get_latest_or_404(review_id, db)
+    result_dict = json.loads(analysis.results_json)
+    studies = _study_dicts(review_id, db)
+
+    try:
         b64 = generate_grade_table(result_dict, studies, outcome=review.title or "")
-        return {"grade_b64": b64}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Error generating GRADE table: {exc}")
+
+    interpretation = ""
+    try:
+        review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
+        interpretation = interpret_grade_table(review_dict, result_dict, studies)
+    except Exception:
+        pass
+
+    return {"grade_b64": b64, "interpretation": interpretation}
 
 
 @router.get("/prisma")

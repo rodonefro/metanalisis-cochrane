@@ -195,13 +195,13 @@ export const generateSection = (reviewId: number, section: string, includeMetaRe
     { include_meta_results: includeMetaResults }
   ).then(r => r.data)
 
-// Individual plots
+// Individual plots (each returns b64 image + automatic AI interpretation)
 export const getForestPlot = (reviewId: number) =>
-  api.get<{ forest_b64: string }>(`/reviews/${reviewId}/analysis/forest`).then(r => r.data)
+  api.get<{ forest_b64: string; interpretation?: string }>(`/reviews/${reviewId}/analysis/forest`).then(r => r.data)
 export const getFunnelPlot = (reviewId: number) =>
-  api.get<{ funnel_b64: string }>(`/reviews/${reviewId}/analysis/funnel`).then(r => r.data)
+  api.get<{ funnel_b64: string; interpretation?: string }>(`/reviews/${reviewId}/analysis/funnel`).then(r => r.data)
 export const getGradeTable = (reviewId: number) =>
-  api.get<{ grade_b64: string }>(`/reviews/${reviewId}/analysis/grade`).then(r => r.data)
+  api.get<{ grade_b64: string; interpretation?: string }>(`/reviews/${reviewId}/analysis/grade`).then(r => r.data)
 
 // PRISMA 2020
 export const getPrismaDiagram = (reviewId: number) =>

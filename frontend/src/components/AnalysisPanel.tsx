@@ -16,6 +16,7 @@ function PlotCard({
   iconColor,
   b64,
   loading,
+  interpretation,
   onGenerate,
   imgClass = 'w-full',
 }: {
@@ -25,6 +26,7 @@ function PlotCard({
   iconColor: string
   b64: string | null
   loading: boolean
+  interpretation?: string
   onGenerate: () => void
   imgClass?: string
 }) {
@@ -64,24 +66,33 @@ function PlotCard({
             className="btn-primary text-xs py-1"
           >
             <Play size={12} />
-            {loading ? 'Generando...' : b64 ? 'Regenerar' : 'Generar'}
+            {loading ? 'Generando + interpretando...' : b64 ? 'Regenerar' : 'Generar'}
           </button>
         </div>
       </div>
 
       {b64 ? (
-        <div className="p-3">
+        <div className="p-3 space-y-3">
           <img
             src={`data:image/png;base64,${b64}`}
             alt={title}
             className={`${imgClass} rounded-lg border border-gray-100`}
           />
+          {interpretation && (
+            <div className="bg-cochrane-50 border border-cochrane-100 rounded-lg p-3">
+              <div className="flex items-center gap-1.5 mb-1.5">
+                <Wand2 size={12} className="text-cochrane-500" />
+                <p className="text-xs font-semibold text-cochrane-700">Interpretación IA (Claude)</p>
+              </div>
+              <p className="text-xs text-gray-700 leading-relaxed whitespace-pre-wrap">{interpretation}</p>
+            </div>
+          )}
         </div>
       ) : (
         <div className="flex flex-col items-center justify-center py-10 text-gray-300">
           <Icon size={40} strokeWidth={1} />
           <p className="text-xs mt-2">
-            {loading ? 'Generando gráfica...' : 'Presiona "Generar" para crear esta gráfica'}
+            {loading ? 'Generando gráfica e interpretación IA...' : 'Presiona "Generar" para crear esta gráfica'}
           </p>
         </div>
       )}
@@ -91,14 +102,18 @@ function PlotCard({
 
 export default function AnalysisPanel({ reviewId }: Props) {
   const [open, setOpen] = useState(true)
-  const [interpretation, setInterpretation] = useState<string>('')
-  const [interpreting, setInterpreting] = useState(false)
   const [forestB64, setForestB64] = useState<string | null>(null)
   const [funnelB64, setFunnelB64] = useState<string | null>(null)
   const [gradeB64, setGradeB64] = useState<string | null>(null)
+  const [forestInterp, setForestInterp] = useState<string>('')
+  const [funnelInterp, setFunnelInterp] = useState<string>('')
+  const [gradeInterp, setGradeInterp] = useState<string>('')
   const [loadingForest, setLoadingForest] = useState(false)
   const [loadingFunnel, setLoadingFunnel] = useState(false)
   const [loadingGrade, setLoadingGrade] = useState(false)
+  // Legacy manual interpretation (kept for full Cochrane-style combined text)
+  const [interpretation, setInterpretation] = useState<string>('')
+  const [interpreting, setInterpreting] = useState(false)
   const qc = useQueryClient()
 
   const { data: analysis } = useQuery<Analysis>({
@@ -129,6 +144,7 @@ export default function AnalysisPanel({ reviewId }: Props) {
     try {
       const res = await getForestPlot(reviewId)
       setForestB64(res.forest_b64)
+      if (res.interpretation) setForestInterp(res.interpretation)
       toast.success('Forest Plot generado')
     } catch (e: any) {
       toast.error(e.response?.data?.detail || 'Ejecuta primero el meta-análisis')
@@ -142,6 +158,7 @@ export default function AnalysisPanel({ reviewId }: Props) {
     try {
       const res = await getFunnelPlot(reviewId)
       setFunnelB64(res.funnel_b64)
+      if (res.interpretation) setFunnelInterp(res.interpretation)
       toast.success('Funnel Plot generado')
     } catch (e: any) {
       toast.error(e.response?.data?.detail || 'Ejecuta primero el meta-análisis')
@@ -155,6 +172,7 @@ export default function AnalysisPanel({ reviewId }: Props) {
     try {
       const res = await getGradeTable(reviewId)
       setGradeB64(res.grade_b64)
+      if (res.interpretation) setGradeInterp(res.interpretation)
       toast.success('Tabla GRADE generada')
     } catch (e: any) {
       toast.error(e.response?.data?.detail || 'Ejecuta primero el meta-análisis')
@@ -261,6 +279,7 @@ export default function AnalysisPanel({ reviewId }: Props) {
                 iconColor="text-cochrane-500"
                 b64={forestB64}
                 loading={loadingForest}
+                interpretation={forestInterp}
                 onGenerate={handleForest}
               />
 
@@ -271,6 +290,7 @@ export default function AnalysisPanel({ reviewId }: Props) {
                 iconColor="text-blue-500"
                 b64={funnelB64}
                 loading={loadingFunnel}
+                interpretation={funnelInterp}
                 onGenerate={handleFunnel}
                 imgClass="w-full max-w-lg mx-auto block"
               />
@@ -282,6 +302,7 @@ export default function AnalysisPanel({ reviewId }: Props) {
                 iconColor="text-emerald-500"
                 b64={gradeB64}
                 loading={loadingGrade}
+                interpretation={gradeInterp}
                 onGenerate={handleGrade}
               />
             </div>
