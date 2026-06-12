@@ -3,8 +3,6 @@ name: Deploy backend to Fly.io
 on:
   push:
     branches: [master]
-    paths:
-      - 'backend/**'
 
 jobs:
   deploy:
