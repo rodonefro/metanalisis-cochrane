@@ -8,16 +8,18 @@ from ..models import Review, Study, Analysis
 from ..schemas import AnalysisOut
 from ..services.statistics import run_meta_analysis, result_to_dict
 from ..services.plots import generate_forest_plot, generate_funnel_plot, generate_rob_traffic_light, generate_prisma_2020, generate_grade_table  # used by on-demand endpoints
-from ..services.ai_generator import generate_prisma_autofill
+from ..services.ai_generator import generate_prisma_autofill, screen_studies_with_ai
 
 router = APIRouter(prefix="/reviews/{review_id}/analysis", tags=["analysis"])
 
 
-def _study_dicts(review_id: int, db: Session) -> list[dict]:
-    studies = db.query(Study).filter(Study.review_id == review_id).all()
+def _study_dicts(review_id: int, db: Session, only_included: bool = True) -> list[dict]:
+    q = db.query(Study).filter(Study.review_id == review_id)
+    if only_included:
+        q = q.filter(Study.included == True)  # noqa: E712
     return [
         {c.name: getattr(s, c.name) for c in s.__table__.columns}
-        for s in studies
+        for s in q.all()
     ]
 
 
@@ -208,4 +210,47 @@ def autofill_prisma(review_id: int, db: Session = Depends(get_db)):
     return {
         "message": f"PRISMA auto-generado para {study_count} estudios incluidos",
         "data": data,
+    }
+
+
+@router.post("/ai-screen")
+def ai_screen_studies(review_id: int, db: Session = Depends(get_db)):
+    """Use AI to screen all studies against PICO criteria and set included/exclusion_reason."""
+    review = db.query(Review).filter(Review.id == review_id).first()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+
+    all_studies = db.query(Study).filter(Study.review_id == review_id).all()
+    if not all_studies:
+        raise HTTPException(status_code=422, detail="No hay estudios para cribar.")
+
+    review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
+    studies_list = [
+        {c.name: getattr(s, c.name) for c in s.__table__.columns}
+        for s in all_studies
+    ]
+
+    try:
+        decisions = screen_studies_with_ai(review_dict, studies_list)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error en cribado IA: {exc}")
+
+    included_count = 0
+    excluded_count = 0
+    for study in all_studies:
+        decision = decisions.get(study.id)
+        if decision is None:
+            continue
+        study.included = decision["included"]
+        study.exclusion_reason = decision.get("reason") if not decision["included"] else None
+        if decision["included"]:
+            included_count += 1
+        else:
+            excluded_count += 1
+
+    db.commit()
+    return {
+        "message": f"Cribado completado: {included_count} incluidos, {excluded_count} excluidos",
+        "included": included_count,
+        "excluded": excluded_count,
     }

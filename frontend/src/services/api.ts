@@ -105,6 +105,7 @@ export interface Study {
   rob_other: string | null
   rob_overall: string | null
   included: boolean
+  exclusion_reason: string | null
   // Bibliographic metadata
   publication_type: string | null
   volume: string | null
@@ -207,6 +208,8 @@ export const getPrismaDiagram = (reviewId: number) =>
   api.get<{ prisma_b64: string }>(`/reviews/${reviewId}/analysis/prisma`).then(r => r.data)
 export const autofillPrisma = (reviewId: number) =>
   api.post<{ message: string; data: Record<string, unknown> }>(`/reviews/${reviewId}/analysis/prisma/autofill`).then(r => r.data)
+export const aiScreenStudies = (reviewId: number) =>
+  api.post<{ message: string; included: number; excluded: number }>(`/reviews/${reviewId}/analysis/ai-screen`).then(r => r.data)
 
 // Export
 export const exportPdf = (reviewId: number) =>

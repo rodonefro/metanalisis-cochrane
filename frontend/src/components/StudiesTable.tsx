@@ -1,9 +1,9 @@
 import { useState, useRef } from 'react'
-import { Upload, Plus, Trash2, ChevronDown, ChevronUp, Database, Download, Merge } from 'lucide-react'
+import { Upload, Plus, Trash2, ChevronDown, ChevronUp, Database, Download, Merge, Wand2, CheckCircle2, XCircle } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  deleteStudy, uploadStudies, createStudy, mergeStudyDatabases, API_BASE,
+  deleteStudy, uploadStudies, createStudy, mergeStudyDatabases, aiScreenStudies, updateStudy, API_BASE,
   type Study,
 } from '../services/api'
 import StudiesDatabaseModal from './StudiesDatabaseModal'
@@ -70,6 +70,22 @@ export default function StudiesTable({ reviewId, studies }: Props) {
     onError: () => toast.error('Error al agregar estudio'),
   })
 
+  const screenMutation = useMutation({
+    mutationFn: () => aiScreenStudies(reviewId),
+    onSuccess: (res) => {
+      toast.success(res.message)
+      invalidate()
+    },
+    onError: (e: any) => toast.error(e.response?.data?.detail || 'Error en cribado IA'),
+  })
+
+  const toggleMutation = useMutation({
+    mutationFn: ({ id, included }: { id: number; included: boolean }) =>
+      updateStudy(reviewId, id, { included }),
+    onSuccess: () => invalidate(),
+    onError: () => toast.error('Error al cambiar inclusión'),
+  })
+
   const setField = (field: keyof Study) => (
     e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>
   ) => setNewStudy((s) => ({ ...s, [field]: e.target.value }))
@@ -91,10 +107,15 @@ export default function StudiesTable({ reviewId, studies }: Props) {
           className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50"
         >
           <div className="flex items-center gap-2">
-            <span className="font-semibold text-gray-800">Estudios incluidos (Included Studies)</span>
-            <span className="text-xs bg-cochrane-100 text-cochrane-600 px-2 py-0.5 rounded-full">
-              {studies.length} estudios
+            <span className="font-semibold text-gray-800">Estudios (Studies)</span>
+            <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
+              {studies.filter(s => s.included !== false).length} incluidos
             </span>
+            {studies.some(s => s.included === false) && (
+              <span className="text-xs bg-red-100 text-red-600 px-2 py-0.5 rounded-full">
+                {studies.filter(s => s.included === false).length} excluidos
+              </span>
+            )}
           </div>
           {open ? <ChevronUp size={18} className="text-gray-400" /> : <ChevronDown size={18} className="text-gray-400" />}
         </button>
@@ -168,6 +189,19 @@ export default function StudiesTable({ reviewId, studies }: Props) {
               >
                 <Plus size={14} /> Agregar manualmente
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm(`¿Cribar ${studies.length} estudios con IA según los criterios PICO? Esto puede tardar 1-2 minutos.`))
+                    screenMutation.mutate()
+                }}
+                disabled={screenMutation.isPending}
+                className="btn-primary text-xs"
+                title="La IA analiza título, resumen y diseño de cada estudio y decide inclusión/exclusión según el PICO"
+              >
+                <Wand2 size={14} className={screenMutation.isPending ? 'animate-spin' : ''} />
+                {screenMutation.isPending ? 'Cribando con IA...' : 'Cribar con IA'}
+              </button>
             </div>
 
             {/* Table */}
@@ -175,17 +209,34 @@ export default function StudiesTable({ reviewId, studies }: Props) {
               <table className="w-full text-xs">
                 <thead className="bg-gray-50 border-b border-gray-200">
                   <tr>
-                    {['Estudio (Study)', 'Año', 'N', 'Eventos I / C', 'Tamaño efecto', 'RoB', ''].map((h) => (
+                    {['✓', 'Estudio (Study)', 'Año', 'N', 'Eventos I / C', 'Tamaño efecto', 'RoB', ''].map((h) => (
                       <th key={h} className="px-3 py-2 text-left font-semibold text-gray-600">{h}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100">
-                  {studies.map((s) => (
-                    <tr key={s.id} className="hover:bg-gray-50">
+                  {studies.map((s) => {
+                    const isIncluded = s.included !== false
+                    return (
+                    <tr key={s.id} className={`hover:bg-gray-50 ${!isIncluded ? 'opacity-50 bg-red-50' : ''}`}>
+                      <td className="px-3 py-2">
+                        <button
+                          type="button"
+                          title={isIncluded ? 'Incluido — clic para excluir' : `Excluido: ${s.exclusion_reason || ''} — clic para incluir`}
+                          onClick={() => toggleMutation.mutate({ id: s.id, included: !isIncluded })}
+                          className="transition-colors"
+                        >
+                          {isIncluded
+                            ? <CheckCircle2 size={16} className="text-green-500" />
+                            : <XCircle size={16} className="text-red-400" />}
+                        </button>
+                      </td>
                       <td className="px-3 py-2 max-w-[160px]">
                         <p className="font-medium truncate">{s.study_label || s.authors || '—'}</p>
-                        {s.journal && <p className="text-gray-400 truncate">{s.journal}</p>}
+                        {s.exclusion_reason && !isIncluded && (
+                          <p className="text-red-400 truncate text-[10px]">{s.exclusion_reason}</p>
+                        )}
+                        {s.journal && isIncluded && <p className="text-gray-400 truncate">{s.journal}</p>}
                       </td>
                       <td className="px-3 py-2 text-gray-500">{s.year || '—'}</td>
                       <td className="px-3 py-2 text-gray-500">
@@ -224,7 +275,7 @@ export default function StudiesTable({ reviewId, studies }: Props) {
                         </button>
                       </td>
                     </tr>
-                  ))}
+                  )})}
                   {studies.length === 0 && (
                     <tr>
                       <td colSpan={7} className="px-3 py-8 text-center text-gray-400">

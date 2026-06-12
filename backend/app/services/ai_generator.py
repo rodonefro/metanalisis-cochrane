@@ -350,6 +350,76 @@ def generate_section(
     return fn(review, studies, meta_results) if section_key in ("abstract", "results", "discussion") else fn(review, studies)
 
 
+def screen_studies_with_ai(review: dict, studies: list[dict]) -> dict:
+    """
+    Screen studies against PICO criteria using AI.
+    Returns dict: {study_id: {"included": bool, "reason": str|None}}
+    Processes in batches of 30 to avoid token limits.
+    """
+    import json, re
+
+    pico = (
+        f"Población: {review.get('population', '')}\n"
+        f"Intervención: {review.get('intervention', '')}\n"
+        f"Comparación: {review.get('comparison', '')}\n"
+        f"Desenlaces: {review.get('outcomes', '')}"
+    )
+    title = review.get("title", "Revisión sistemática")
+
+    results: dict = {}
+    batch_size = 30
+
+    client = _get_client()
+
+    for i in range(0, len(studies), batch_size):
+        batch = studies[i:i + batch_size]
+        lines = []
+        for s in batch:
+            sid = s["id"]
+            label = s.get("study_label") or s.get("authors") or f"ID:{sid}"
+            year = s.get("year") or ""
+            study_title = s.get("title") or ""
+            abstract = (s.get("abstract_text") or "")[:400]
+            design = s.get("study_design") or ""
+            lines.append(
+                f'  {{"id": {sid}, "label": "{label}", "year": "{year}", '
+                f'"title": "{study_title[:120]}", "design": "{design}", '
+                f'"abstract": "{abstract}"}}'
+            )
+        studies_json = "[\n" + ",\n".join(lines) + "\n]"
+
+        user = (
+            f"REVISIÓN SISTEMÁTICA: {title}\n\nCRITERIOS PICO:\n{pico}\n\n"
+            "Evalúa cada estudio para determinar si debe incluirse en el metaanálisis "
+            "según los criterios PICO anteriores. Considera:\n"
+            "- Tipo de estudio (RCT o estudio controlado preferido)\n"
+            "- Población correcta según los criterios\n"
+            "- Intervención y comparación relevantes\n"
+            "- Desenlaces reportados\n\n"
+            f"ESTUDIOS A CRIBAR:\n{studies_json}\n\n"
+            "Responde ÚNICAMENTE con JSON válido:\n"
+            '{"decisions": [{"id": N, "included": true/false, "reason": "razón breve en español si excluido, null si incluido"}]}'
+        )
+
+        message = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=4096,
+            system="Eres experto en revisiones sistemáticas Cochrane. Responde ÚNICAMENTE con JSON válido.",
+            messages=[{"role": "user", "content": user}],
+        )
+        text = message.content[0].text.strip()
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if match:
+            data = json.loads(match.group())
+            for d in data.get("decisions", []):
+                results[d["id"]] = {
+                    "included": bool(d.get("included", True)),
+                    "reason": d.get("reason"),
+                }
+
+    return results
+
+
 def generate_prisma_autofill(review: dict, study_count: int) -> dict:
     """Use AI to generate realistic PRISMA 2020 flow numbers based on PICO and included studies."""
     import json, re
