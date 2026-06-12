@@ -210,6 +210,8 @@ export const autofillPrisma = (reviewId: number) =>
   api.post<{ message: string; data: Record<string, unknown> }>(`/reviews/${reviewId}/analysis/prisma/autofill`).then(r => r.data)
 export const aiScreenStudies = (reviewId: number) =>
   api.post<{ message: string; included: number; excluded: number }>(`/reviews/${reviewId}/analysis/ai-screen`).then(r => r.data)
+export const aiExtractData = (reviewId: number) =>
+  api.post<{ message: string; updated: number; total_included: number }>(`/reviews/${reviewId}/analysis/ai-extract`).then(r => r.data)
 
 // Export
 export const exportPdf = (reviewId: number) =>

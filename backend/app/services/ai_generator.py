@@ -420,6 +420,101 @@ def screen_studies_with_ai(review: dict, studies: list[dict]) -> dict:
     return results
 
 
+def extract_quantitative_data(review: dict, studies: list[dict]) -> dict:
+    """
+    For each included study with abstract_text, use AI to extract quantitative
+    outcome data needed for meta-analysis.
+    Returns {study_id: {field: value, ...}} with extracted fields.
+    Processes studies one batch at a time (10 per call).
+    """
+    import json, re
+
+    effect_measure = review.get("effect_measure", "OR")
+    pico = (
+        f"Población: {review.get('population', '')}\n"
+        f"Intervención: {review.get('intervention', '')}\n"
+        f"Comparación: {review.get('comparison', '')}\n"
+        f"Desenlaces: {review.get('outcomes', '')}"
+    )
+
+    # Determine what data to extract based on effect measure
+    if effect_measure in ("OR", "RR", "RD"):
+        data_template = (
+            '"events_intervention": N_o_null, "total_intervention": N_o_null, '
+            '"events_control": N_o_null, "total_control": N_o_null'
+        )
+        data_description = "número de eventos (casos) y total de participantes en grupo intervención y grupo control"
+    elif effect_measure in ("MD", "SMD"):
+        data_template = (
+            '"mean_intervention": N_o_null, "sd_intervention": N_o_null, "n_intervention": N_o_null, '
+            '"mean_control": N_o_null, "sd_control": N_o_null, "n_control": N_o_null'
+        )
+        data_description = "media, desviación estándar y n de cada grupo"
+    else:  # PRECALCULATED
+        data_template = (
+            '"effect_size": N_o_null, "effect_size_lower": N_o_null, "effect_size_upper": N_o_null, '
+            '"total_intervention": N_o_null, "total_control": N_o_null'
+        )
+        data_description = "tamaño de efecto, IC95% inferior y superior, y n por grupo"
+
+    client = _get_client()
+    results: dict = {}
+    batch_size = 10
+
+    # Only process studies with abstract text and no existing quantitative data
+    candidates = [
+        s for s in studies
+        if s.get("included") is not False
+        and s.get("abstract_text")
+        and not any(s.get(f) for f in [
+            "events_intervention", "total_intervention",
+            "mean_intervention", "effect_size"
+        ])
+    ]
+
+    for i in range(0, len(candidates), batch_size):
+        batch = candidates[i:i + batch_size]
+        entries = []
+        for s in batch:
+            abstract = (s.get("abstract_text") or "")[:800]
+            results_text = (s.get("study_results") or "")[:300]
+            label = s.get("study_label") or s.get("authors") or f"ID:{s['id']}"
+            entries.append(
+                f'  {{"id": {s["id"]}, "label": "{label}", '
+                f'"abstract": "{abstract}", "results": "{results_text}"}}'
+            )
+
+        user = (
+            f"REVISIÓN: {review.get('title', '')}\nMEDIDA DE EFECTO: {effect_measure}\n"
+            f"PICO:\n{pico}\n\n"
+            f"Extrae del resumen/resultados de cada estudio: {data_description}.\n"
+            "Si un dato no está mencionado, usa null. Solo extrae lo que el texto diga explícitamente.\n\n"
+            f"ESTUDIOS:\n[{chr(10).join(entries)}]\n\n"
+            "Responde ÚNICAMENTE con JSON:\n"
+            '{"extractions": [{"id": N, ' + data_template + ', "sample_size": N_o_null}]}'
+        )
+
+        message = client.messages.create(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=4096,
+            system="Extrae datos numéricos de texto científico. Responde ÚNICAMENTE con JSON válido.",
+            messages=[{"role": "user", "content": user}],
+        )
+        text = message.content[0].text.strip()
+        match = re.search(r'\{.*\}', text, re.DOTALL)
+        if match:
+            data = json.loads(match.group())
+            for ext in data.get("extractions", []):
+                sid = ext.pop("id", None)
+                if sid is not None:
+                    # Keep only non-null values
+                    clean = {k: v for k, v in ext.items() if v is not None}
+                    if clean:
+                        results[sid] = clean
+
+    return results
+
+
 def generate_prisma_autofill(review: dict, study_count: int) -> dict:
     """Use AI to generate realistic PRISMA 2020 flow numbers based on PICO and included studies."""
     import json, re

@@ -3,7 +3,7 @@ import { Upload, Plus, Trash2, ChevronDown, ChevronUp, Database, Download, Merge
 import toast from 'react-hot-toast'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  deleteStudy, uploadStudies, createStudy, mergeStudyDatabases, aiScreenStudies, updateStudy, API_BASE,
+  deleteStudy, uploadStudies, createStudy, mergeStudyDatabases, aiScreenStudies, aiExtractData, updateStudy, API_BASE,
   type Study,
 } from '../services/api'
 import StudiesDatabaseModal from './StudiesDatabaseModal'
@@ -84,6 +84,15 @@ export default function StudiesTable({ reviewId, studies }: Props) {
       updateStudy(reviewId, id, { included }),
     onSuccess: () => invalidate(),
     onError: () => toast.error('Error al cambiar inclusión'),
+  })
+
+  const extractMutation = useMutation({
+    mutationFn: () => aiExtractData(reviewId),
+    onSuccess: (res) => {
+      toast.success(res.message)
+      invalidate()
+    },
+    onError: (e: any) => toast.error(e.response?.data?.detail || 'Error en extracción de datos'),
   })
 
   const setField = (field: keyof Study) => (
@@ -195,12 +204,25 @@ export default function StudiesTable({ reviewId, studies }: Props) {
                   if (confirm(`¿Cribar ${studies.length} estudios con IA según los criterios PICO? Esto puede tardar 1-2 minutos.`))
                     screenMutation.mutate()
                 }}
-                disabled={screenMutation.isPending}
+                disabled={screenMutation.isPending || extractMutation.isPending}
                 className="btn-primary text-xs"
                 title="La IA analiza título, resumen y diseño de cada estudio y decide inclusión/exclusión según el PICO"
               >
                 <Wand2 size={14} className={screenMutation.isPending ? 'animate-spin' : ''} />
                 {screenMutation.isPending ? 'Cribando con IA...' : 'Cribar con IA'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm('¿Extraer datos numéricos (eventos, participantes, medias) desde los resúmenes con IA? Solo actualiza campos vacíos.'))
+                    extractMutation.mutate()
+                }}
+                disabled={extractMutation.isPending || screenMutation.isPending}
+                className="btn-secondary text-xs"
+                title="Extrae eventos, totales, medias y DEs desde el abstract de cada estudio incluido"
+              >
+                <Wand2 size={14} className={extractMutation.isPending ? 'animate-spin' : ''} />
+                {extractMutation.isPending ? 'Extrayendo datos...' : 'Extraer datos con IA'}
               </button>
             </div>
 

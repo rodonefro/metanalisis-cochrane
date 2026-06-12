@@ -8,7 +8,7 @@ from ..models import Review, Study, Analysis
 from ..schemas import AnalysisOut
 from ..services.statistics import run_meta_analysis, result_to_dict
 from ..services.plots import generate_forest_plot, generate_funnel_plot, generate_rob_traffic_light, generate_prisma_2020, generate_grade_table  # used by on-demand endpoints
-from ..services.ai_generator import generate_prisma_autofill, screen_studies_with_ai
+from ..services.ai_generator import generate_prisma_autofill, screen_studies_with_ai, extract_quantitative_data
 
 router = APIRouter(prefix="/reviews/{review_id}/analysis", tags=["analysis"])
 
@@ -253,4 +253,71 @@ def ai_screen_studies(review_id: int, db: Session = Depends(get_db)):
         "message": f"Cribado completado: {included_count} incluidos, {excluded_count} excluidos",
         "included": included_count,
         "excluded": excluded_count,
+    }
+
+
+@router.post("/ai-extract")
+def ai_extract_data(review_id: int, db: Session = Depends(get_db)):
+    """
+    Use AI to extract quantitative outcome data from each study's abstract.
+    Only processes included studies that are missing quantitative fields.
+    """
+    review = db.query(Review).filter(Review.id == review_id).first()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+
+    studies = db.query(Study).filter(
+        Study.review_id == review_id,
+        Study.included == True,  # noqa: E712
+    ).all()
+    if not studies:
+        raise HTTPException(status_code=422, detail="No hay estudios incluidos para extraer datos.")
+
+    review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
+    studies_list = [
+        {c.name: getattr(s, c.name) for c in s.__table__.columns}
+        for s in studies
+    ]
+
+    try:
+        extractions = extract_quantitative_data(review_dict, studies_list)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error en extracción IA: {exc}")
+
+    updated_count = 0
+    numeric_fields = {
+        "events_intervention", "total_intervention", "events_control", "total_control",
+        "mean_intervention", "sd_intervention", "n_intervention",
+        "mean_control", "sd_control", "n_control",
+        "effect_size", "effect_size_lower", "effect_size_upper", "sample_size",
+    }
+
+    study_map = {s.id: s for s in studies}
+    for study_id, fields in extractions.items():
+        study = study_map.get(study_id)
+        if not study:
+            continue
+        changed = False
+        for field, value in fields.items():
+            if field not in numeric_fields:
+                continue
+            if getattr(study, field, None) is None and value is not None:
+                try:
+                    if field in {"events_intervention", "total_intervention", "events_control",
+                                 "total_control", "n_intervention", "n_control", "sample_size"}:
+                        setattr(study, field, int(float(value)))
+                    else:
+                        setattr(study, field, float(value))
+                    changed = True
+                except (TypeError, ValueError):
+                    pass
+        if changed:
+            updated_count += 1
+
+    db.commit()
+    return {
+        "message": f"Extracción completada: {updated_count} estudios actualizados con datos numéricos",
+        "updated": updated_count,
+        "total_included": len(studies),
+        "candidates_with_abstract": len([s for s in studies_list if s.get("abstract_text")]),
     }
