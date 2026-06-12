@@ -2,6 +2,7 @@
 Forest plot and funnel plot generation using matplotlib.
 Returns base64-encoded PNG strings for API responses.
 """
+import gc
 import io
 import math
 import base64
@@ -9,6 +10,7 @@ from typing import Optional
 import numpy as np
 import matplotlib
 matplotlib.use("Agg")
+matplotlib.rcParams['figure.max_open_warning'] = 5
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D
@@ -20,11 +22,14 @@ from .statistics import MetaResult, back_transform
 
 def _b64(fig) -> str:
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=150, bbox_inches="tight",
+    fig.savefig(buf, format="png", dpi=100, bbox_inches="tight",
                 facecolor="white", edgecolor="none")
     buf.seek(0)
     encoded = base64.b64encode(buf.read()).decode("utf-8")
+    buf.close()
     plt.close(fig)
+    plt.close("all")
+    gc.collect()
     return encoded
 
 
@@ -37,8 +42,8 @@ def generate_forest_plot(result: MetaResult, title: str = "",
 
     studies = result.studies
     k = len(studies)
-    fig_height = max(6, k * 0.55 + 4)
-    fig, ax = plt.subplots(figsize=(12, fig_height))
+    fig_height = max(5, min(k * 0.45 + 3, 24))
+    fig, ax = plt.subplots(figsize=(10, fig_height))
 
     y_positions = list(range(k, 0, -1))
     colors = {"low": "#2ecc71", "some_concerns": "#f39c12", "high": "#e74c3c"}
