@@ -90,7 +90,7 @@ function PlotCard({
 }
 
 export default function AnalysisPanel({ reviewId }: Props) {
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(true)
   const [interpretation, setInterpretation] = useState<string>('')
   const [interpreting, setInterpreting] = useState(false)
   const [forestB64, setForestB64] = useState<string | null>(null)

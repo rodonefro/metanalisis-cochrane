@@ -1,8 +1,8 @@
 import { useState } from 'react'
-import { GitBranch, ChevronDown, ChevronUp, RefreshCw, Download } from 'lucide-react'
+import { GitBranch, ChevronDown, ChevronUp, RefreshCw, Download, Wand2 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { updateReview, getPrismaDiagram, type Review } from '../services/api'
+import { updateReview, getPrismaDiagram, autofillPrisma, type Review } from '../services/api'
 
 interface Props {
   reviewId: number
@@ -105,6 +105,7 @@ export default function PrismaPanel({ reviewId, review }: Props) {
   const [open, setOpen] = useState(false)
   const [prismaImg, setPrismaImg] = useState<string | null>(null)
   const [generating, setGenerating] = useState(false)
+  const [autofilling, setAutofilling] = useState(false)
   const [form, setForm] = useState<Partial<Review>>({})
   const [dirty, setDirty] = useState(false)
   const qc = useQueryClient()
@@ -129,6 +130,22 @@ export default function PrismaPanel({ reviewId, review }: Props) {
     if (formVal !== undefined) return formVal == null ? '' : String(formVal)
     const reviewVal = review[key as keyof Review]
     return reviewVal == null ? '' : String(reviewVal)
+  }
+
+  const handleAutofill = async () => {
+    setAutofilling(true)
+    try {
+      const res = await autofillPrisma(reviewId)
+      // Populate the form with AI-generated values
+      setForm(res.data as Partial<Review>)
+      setDirty(true)
+      qc.invalidateQueries({ queryKey: ['review', reviewId] })
+      toast.success('Datos PRISMA auto-generados con IA. Revisa y guarda.')
+    } catch (e: any) {
+      toast.error(e.response?.data?.detail || 'Error al auto-generar PRISMA')
+    } finally {
+      setAutofilling(false)
+    }
   }
 
   const handleGenerate = async () => {
@@ -200,6 +217,15 @@ export default function PrismaPanel({ reviewId, review }: Props) {
           </div>
 
           <div className="flex items-center gap-2 flex-wrap">
+            <button
+              type="button"
+              onClick={handleAutofill}
+              disabled={autofilling || generating}
+              className="btn-secondary text-xs"
+            >
+              <Wand2 size={14} className={autofilling ? 'animate-spin' : ''} />
+              {autofilling ? 'Generando con IA...' : 'Auto-generar con IA'}
+            </button>
             {dirty && (
               <button
                 type="button"
@@ -213,7 +239,7 @@ export default function PrismaPanel({ reviewId, review }: Props) {
             <button
               type="button"
               onClick={handleGenerate}
-              disabled={generating}
+              disabled={generating || autofilling}
               className="btn-primary text-xs"
             >
               <RefreshCw size={14} className={generating ? 'animate-spin' : ''} />

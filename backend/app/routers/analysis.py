@@ -8,6 +8,7 @@ from ..models import Review, Study, Analysis
 from ..schemas import AnalysisOut
 from ..services.statistics import run_meta_analysis, result_to_dict
 from ..services.plots import generate_forest_plot, generate_funnel_plot, generate_rob_traffic_light, generate_prisma_2020, generate_grade_table
+from ..services.ai_generator import generate_prisma_autofill
 
 router = APIRouter(prefix="/reviews/{review_id}/analysis", tags=["analysis"])
 
@@ -187,3 +188,34 @@ def get_prisma_diagram(review_id: int, db: Session = Depends(get_db)):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Error generating PRISMA diagram: {exc}")
     return {"prisma_b64": b64}
+
+
+@router.post("/prisma/autofill")
+def autofill_prisma(review_id: int, db: Session = Depends(get_db)):
+    """Use AI to generate and save realistic PRISMA numbers based on the review's studies."""
+    review = db.query(Review).filter(Review.id == review_id).first()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+
+    study_count = db.query(Study).filter(Study.review_id == review_id).count()
+    if study_count == 0:
+        raise HTTPException(status_code=422, detail="Agrega estudios a la revisión antes de auto-generar el PRISMA.")
+
+    review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
+
+    try:
+        data = generate_prisma_autofill(review_dict, study_count)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error en generación IA del PRISMA: {exc}")
+
+    # Persist generated values to the review
+    for field, value in data.items():
+        if hasattr(review, field):
+            setattr(review, field, value)
+    db.commit()
+    db.refresh(review)
+
+    return {
+        "message": f"PRISMA auto-generado para {study_count} estudios incluidos",
+        "data": data,
+    }

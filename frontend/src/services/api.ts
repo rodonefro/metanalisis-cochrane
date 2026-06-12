@@ -205,6 +205,8 @@ export const getGradeTable = (reviewId: number) =>
 // PRISMA 2020
 export const getPrismaDiagram = (reviewId: number) =>
   api.get<{ prisma_b64: string }>(`/reviews/${reviewId}/analysis/prisma`).then(r => r.data)
+export const autofillPrisma = (reviewId: number) =>
+  api.post<{ message: string; data: Record<string, unknown> }>(`/reviews/${reviewId}/analysis/prisma/autofill`).then(r => r.data)
 
 // Export
 export const exportPdf = (reviewId: number) =>

@@ -86,12 +86,13 @@ def _call_claude(system: str, user: str) -> str:
 
 
 SYSTEM_COCHRANE = (
-    "You are an expert systematic reviewer trained in Cochrane methodology. "
-    "Write academic, evidence-based content for a Cochrane-style systematic review. "
-    "Use precise scientific language, cite study findings appropriately, and follow "
-    "PRISMA and Cochrane standards. Write in the third person, present tense where "
-    "appropriate for methods, past tense for results. Output only the requested section "
-    "text — no headings, no preamble, no markdown formatting."
+    "Eres un experto en revisiones sistemáticas con formación en metodología Cochrane. "
+    "SIEMPRE escribe TODO el contenido en ESPAÑOL (castellano). "
+    "Usa lenguaje científico preciso y académico, cita hallazgos de estudios apropiadamente, "
+    "y sigue los estándares PRISMA y Cochrane. Escribe en tercera persona, tiempo presente "
+    "para métodos y tiempo pasado para resultados. "
+    "Genera únicamente el texto de la sección solicitada — sin encabezados, sin preámbulo, "
+    "sin formato markdown. IMPORTANTE: responde exclusivamente en español."
 )
 
 
@@ -100,10 +101,10 @@ def generate_abstract(review: dict, studies: list[dict], meta_results: dict | No
     meta = _meta_summary(meta_results)
     user = (
         f"{ctx}\n\n{meta}\n\n"
-        "Write a structured abstract for this Cochrane systematic review with the following "
-        "subsections: Background, Objectives, Search methods, Selection criteria, "
-        "Data collection and analysis, Main results, Authors' conclusions. "
-        "Be concise (300-400 words total)."
+        "Escribe un resumen estructurado en ESPAÑOL para esta revisión sistemática Cochrane "
+        "con las siguientes subsecciones: Antecedentes, Objetivos, Métodos de búsqueda, "
+        "Criterios de selección, Obtención y análisis de datos, Resultados principales, "
+        "Conclusiones de los autores. Sé conciso (300-400 palabras en total)."
     )
     return _call_claude(SYSTEM_COCHRANE, user)
 
@@ -112,12 +113,12 @@ def generate_background(review: dict, studies: list[dict]) -> str:
     ctx = _base_context(review, studies)
     user = (
         f"{ctx}\n\n"
-        "Write the Background section for this Cochrane systematic review. "
-        "Include: (1) Description of the condition/disease and its epidemiology, "
-        "(2) Description of the intervention and how it works, "
-        "(3) Why the intervention may work (mechanism of action), "
-        "(4) Why it is important to do this review. "
-        "Write approximately 600-800 words."
+        "Escribe la sección de Antecedentes en ESPAÑOL para esta revisión sistemática Cochrane. "
+        "Incluye: (1) Descripción de la condición/enfermedad y su epidemiología, "
+        "(2) Descripción de la intervención y cómo funciona, "
+        "(3) Por qué la intervención puede funcionar (mecanismo de acción), "
+        "(4) Por qué es importante realizar esta revisión. "
+        "Escribe aproximadamente 600-800 palabras."
     )
     return _call_claude(SYSTEM_COCHRANE, user)
 
@@ -132,9 +133,9 @@ def generate_objectives(review: dict) -> str:
     user = (
         f"REVIEW TITLE: {review.get('title', 'Systematic Review')}\n\n"
         f"PICO:\n{pico}\n\n"
-        "Write a concise Objectives section for this Cochrane systematic review. "
-        "Start with 'To assess the effects of [intervention] on [outcomes] in [population].' "
-        "Then state any secondary objectives. Write 80-120 words."
+        "Escribe una sección de Objetivos concisa en ESPAÑOL para esta revisión sistemática Cochrane. "
+        "Comienza con: 'Evaluar los efectos de [intervención] sobre [desenlaces] en [población].' "
+        "Luego indica los objetivos secundarios. Escribe 80-120 palabras."
     )
     return _call_claude(SYSTEM_COCHRANE, user)
 
@@ -145,25 +146,25 @@ def generate_methods(review: dict, studies: list[dict]) -> str:
     model_type = review.get("model_type", "random")
     user = (
         f"{ctx}\n\n"
-        "Write the Methods section for this Cochrane systematic review. Include:\n"
-        "1. Criteria for considering studies for this review:\n"
-        "   a) Types of studies\n"
-        "   b) Types of participants\n"
-        "   c) Types of interventions\n"
-        "   d) Types of outcome measures (primary and secondary outcomes)\n"
-        "2. Search methods for identification of studies (databases: PubMed, Embase, "
-        "Cochrane CENTRAL, Scopus, Web of Science; grey literature)\n"
-        "3. Data collection and analysis:\n"
-        "   - Selection of studies\n"
-        "   - Data extraction and management\n"
-        "   - Assessment of risk of bias (Cochrane RoB 2 tool)\n"
-        f"   - Measures of treatment effect ({effect_measure})\n"
-        f"   - Unit of analysis issues\n"
-        "   - Dealing with missing data\n"
-        f"   - Assessment of heterogeneity (Cochran's Q, I², {model_type}-effects model)\n"
-        "   - Assessment of reporting biases (funnel plot, Egger's test)\n"
-        "   - Data synthesis\n"
-        "Write approximately 800-1000 words."
+        "Escribe la sección de Métodos en ESPAÑOL para esta revisión sistemática Cochrane. Incluye:\n"
+        "1. Criterios para considerar estudios en esta revisión:\n"
+        "   a) Tipos de estudios\n"
+        "   b) Tipos de participantes\n"
+        "   c) Tipos de intervenciones\n"
+        "   d) Tipos de medidas de resultado (desenlaces primarios y secundarios)\n"
+        "2. Métodos de búsqueda para identificar estudios (bases de datos: PubMed, Embase, "
+        "Cochrane CENTRAL, Scopus, Web of Science; literatura gris)\n"
+        "3. Obtención y análisis de datos:\n"
+        "   - Selección de estudios\n"
+        "   - Extracción de datos y gestión\n"
+        "   - Evaluación del riesgo de sesgo (herramienta Cochrane RoB 2)\n"
+        f"   - Medidas del efecto del tratamiento ({effect_measure})\n"
+        "   - Problemas de unidad de análisis\n"
+        "   - Manejo de datos faltantes\n"
+        f"   - Evaluación de heterogeneidad (Q de Cochran, I², modelo de efectos {model_type})\n"
+        "   - Evaluación de sesgos de publicación (gráfico de embudo, prueba de Egger)\n"
+        "   - Síntesis de datos\n"
+        "Escribe aproximadamente 800-1000 palabras."
     )
     return _call_claude(SYSTEM_COCHRANE, user)
 
@@ -174,20 +175,20 @@ def generate_results(review: dict, studies: list[dict], meta_results: dict | Non
     study_count = len(studies)
     user = (
         f"{ctx}\n\n{meta}\n\n"
-        "Write the Results section for this Cochrane systematic review. Include:\n"
-        "1. Description of studies:\n"
-        f"   - Study flow (number screened, eligible, included: {study_count} studies)\n"
-        "   - Characteristics of included studies (design, participants, interventions)\n"
-        "   - Excluded studies (briefly)\n"
-        "   - Risk of bias assessment summary\n"
-        "2. Effects of interventions:\n"
-        "   - Primary outcome(s) with meta-analysis results\n"
-        "   - Secondary outcome(s)\n"
-        "   - Heterogeneity findings and explanation\n"
-        "   - Subgroup analyses (if applicable)\n"
-        "   - Reporting biases\n"
-        "Reference specific study findings and the pooled estimates. "
-        "Write approximately 700-900 words."
+        "Escribe la sección de Resultados en ESPAÑOL para esta revisión sistemática Cochrane. Incluye:\n"
+        "1. Descripción de los estudios:\n"
+        f"   - Flujo de estudios (número cribados, elegibles, incluidos: {study_count} estudios)\n"
+        "   - Características de los estudios incluidos (diseño, participantes, intervenciones)\n"
+        "   - Estudios excluidos (brevemente)\n"
+        "   - Resumen de evaluación del riesgo de sesgo\n"
+        "2. Efectos de las intervenciones:\n"
+        "   - Desenlace(s) primario(s) con resultados del metaanálisis\n"
+        "   - Desenlace(s) secundario(s)\n"
+        "   - Hallazgos de heterogeneidad y explicación\n"
+        "   - Análisis de subgrupos (si aplica)\n"
+        "   - Sesgos de publicación\n"
+        "Referencia hallazgos específicos de estudios y las estimaciones agrupadas. "
+        "Escribe aproximadamente 700-900 palabras."
     )
     return _call_claude(SYSTEM_COCHRANE, user)
 
@@ -197,16 +198,16 @@ def generate_discussion(review: dict, studies: list[dict], meta_results: dict | 
     meta = _meta_summary(meta_results)
     user = (
         f"{ctx}\n\n{meta}\n\n"
-        "Write the Discussion section for this Cochrane systematic review. Include:\n"
-        "1. Summary of main results\n"
-        "2. Overall completeness and applicability of evidence\n"
-        "3. Quality of the evidence (risk of bias, heterogeneity)\n"
-        "4. Potential biases in the review process\n"
-        "5. Agreements and disagreements with other studies or reviews\n"
-        "6. Authors' conclusions:\n"
-        "   a) Implications for practice\n"
-        "   b) Implications for research\n"
-        "Write approximately 600-800 words."
+        "Escribe la sección de Discusión en ESPAÑOL para esta revisión sistemática Cochrane. Incluye:\n"
+        "1. Resumen de los resultados principales\n"
+        "2. Completitud y aplicabilidad general de la evidencia\n"
+        "3. Calidad de la evidencia (riesgo de sesgo, heterogeneidad)\n"
+        "4. Posibles sesgos en el proceso de revisión\n"
+        "5. Acuerdos y desacuerdos con otros estudios o revisiones\n"
+        "6. Conclusiones de los autores:\n"
+        "   a) Implicaciones para la práctica\n"
+        "   b) Implicaciones para la investigación\n"
+        "Escribe aproximadamente 600-800 palabras."
     )
     return _call_claude(SYSTEM_COCHRANE, user)
 
@@ -257,11 +258,12 @@ def generate_references(
         f"REVIEW TITLE: {review.get('title', '')}\n\n"
         f"INCLUDED STUDIES:\n{studies_block}\n\n"
         f"FORMAT REQUIRED: {fmt}\n\n"
-        "Generate a complete, properly formatted reference list for all included studies "
-        "using the format specified above. Number each reference sequentially. "
-        "If specific metadata (volume, pages, DOI) is missing, use the available information "
-        "and mark missing fields with '[datos no disponibles]'. "
-        "Output only the numbered reference list, no headings or preamble."
+        "Genera en ESPAÑOL una lista de referencias completa y correctamente formateada "
+        "para todos los estudios incluidos usando el formato especificado arriba. "
+        "Numera cada referencia secuencialmente. "
+        "Si falta metadato específico (volumen, páginas, DOI), usa la información disponible "
+        "y marca los campos faltantes con '[datos no disponibles]'. "
+        "Genera únicamente la lista numerada de referencias, sin encabezados ni preámbulo."
     )
     return _call_claude(SYSTEM_COCHRANE, user)
 
@@ -299,15 +301,16 @@ def generate_plot_interpretation(
         + (f"Prediction interval: [{pi.get('lower', 'N/A'):.2f}, {pi.get('upper', 'N/A'):.2f}]\n"
            if pi.get("lower") is not None else "")
         + f"\nIndividual studies:\n{study_lines}\n\n"
-        "Write a detailed Cochrane-style interpretation of:\n"
-        "1. The forest plot: describe the pooled estimate, direction and magnitude of effect, "
-        "confidence interval, which studies drive the result, any notable outliers.\n"
-        "2. The funnel plot: interpret symmetry/asymmetry, what this implies about "
-        "publication bias (reference Egger's test if available).\n"
-        "3. Heterogeneity: explain the I² value clinically, discuss possible sources, "
-        "interpret the prediction interval if available.\n"
-        "4. Overall conclusion from the statistical analysis.\n"
-        "Write approximately 400-500 words in formal academic style."
+        "Escribe en ESPAÑOL una interpretación detallada estilo Cochrane de:\n"
+        "1. El diagrama de bosque (forest plot): describe la estimación agrupada, dirección "
+        "y magnitud del efecto, intervalo de confianza, qué estudios impulsan el resultado, "
+        "valores atípicos notables.\n"
+        "2. El gráfico de embudo (funnel plot): interpreta simetría/asimetría, qué implica "
+        "respecto al sesgo de publicación (referencia a la prueba de Egger si está disponible).\n"
+        "3. Heterogeneidad: explica el valor de I² clínicamente, discute posibles fuentes, "
+        "interpreta el intervalo de predicción si está disponible.\n"
+        "4. Conclusión general del análisis estadístico.\n"
+        "Escribe aproximadamente 400-500 palabras en estilo académico formal."
     )
     return _call_claude(SYSTEM_COCHRANE, user)
 
@@ -345,3 +348,56 @@ def generate_section(
     if section_key == "objectives":
         return fn(review)
     return fn(review, studies, meta_results) if section_key in ("abstract", "results", "discussion") else fn(review, studies)
+
+
+def generate_prisma_autofill(review: dict, study_count: int) -> dict:
+    """Use AI to generate realistic PRISMA 2020 flow numbers based on PICO and included studies."""
+    import json, re
+
+    pico = (
+        f"Población: {review.get('population', '')}\n"
+        f"Intervención: {review.get('intervention', '')}\n"
+        f"Comparación: {review.get('comparison', '')}\n"
+        f"Desenlaces: {review.get('outcomes', '')}"
+    )
+    user = (
+        f"TÍTULO: {review.get('title', 'Revisión sistemática')}\n\n"
+        f"PICO:\n{pico}\n\n"
+        f"ESTUDIOS INCLUIDOS (final): {study_count} estudios fueron incluidos en este metaanálisis.\n\n"
+        "Genera números realistas y coherentes para el diagrama de flujo PRISMA 2020. "
+        "Los números deben ser lógicos: registros identificados >> cribados > evaluados > incluidos. "
+        "Razones de exclusión deben ser específicas al PICO de esta revisión.\n\n"
+        "Responde ÚNICAMENTE con un JSON válido, sin comentarios, sin texto adicional:\n"
+        "{\n"
+        '  "prisma_db_names": "PubMed=N,Scopus=N,EMBASE=N,Cochrane CENTRAL=N",\n'
+        '  "prisma_other_sources": N,\n'
+        '  "prisma_duplicates_removed": N,\n'
+        '  "prisma_other_removed": N,\n'
+        '  "prisma_screened": N,\n'
+        '  "prisma_excluded_screening": N,\n'
+        '  "prisma_sought": N,\n'
+        '  "prisma_not_retrieved": N,\n'
+        '  "prisma_assessed": N,\n'
+        '  "prisma_excluded_eligibility": N,\n'
+        '  "prisma_exclusion_reasons": "Razón específica 1=N,Razón específica 2=N,Razón específica 3=N",\n'
+        f'  "prisma_included": {study_count},\n'
+        f'  "prisma_reports_included": {study_count}\n'
+        "}\n"
+        f"El valor de prisma_included DEBE ser exactamente {study_count}. "
+        "Usa razones de exclusión en español relevantes al PICO."
+    )
+
+    # Use a direct call without extended thinking for structured JSON output
+    client = _get_client()
+    message = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=1024,
+        system="Eres un experto en revisiones sistemáticas. Responde ÚNICAMENTE con JSON válido, sin texto adicional.",
+        messages=[{"role": "user", "content": user}],
+    )
+    result_text = message.content[0].text.strip()
+
+    match = re.search(r'\{.*\}', result_text, re.DOTALL)
+    if match:
+        return json.loads(match.group())
+    raise ValueError(f"La IA no devolvió JSON válido: {result_text[:200]}")
