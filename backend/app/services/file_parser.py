@@ -222,6 +222,116 @@ _COLUMN_MAP = {
     # ── Notes ────────────────────────────────────────────────────────────────
     "notes":                  "notes",
     "notas":                  "notes",
+
+    # ── ELICIT (elicit.com) export columns ───────────────────────────────────
+    "number_of_participants":       "sample_size",
+    "number of participants":       "sample_size",
+    "n_participants":               "sample_size",
+    "participants":                 "sample_size",
+    "total_n":                      "sample_size",
+    "sample_n":                     "sample_size",
+
+    "journal/conference":           "journal",
+    "conference/journal":           "journal",
+    "conference":                   "journal",
+    "venue":                        "journal",
+    "published_in":                 "journal",
+
+    "first_author":                 "authors",
+    "first author":                 "authors",
+    "lead_author":                  "authors",
+
+    "outcome_measured":             "study_results",
+    "outcome measured":             "study_results",
+    "outcome":                      "study_results",
+    "outcomes":                     "study_results",
+    "primary_outcome":              "objective_text",
+    "primary outcome":              "objective_text",
+    "primary_outcomes":             "objective_text",
+    "primary outcomes":             "objective_text",
+    "secondary_outcome":            "study_results",
+    "secondary outcome":            "study_results",
+
+    "background":                   "objective_text",
+    "introduction":                 "objective_text",
+
+    "conclusion":                   "findings",
+    "conclusions":                  "findings",
+    "authors'_conclusions":         "findings",
+    "authors' conclusions":         "findings",
+    "author_conclusions":           "findings",
+
+    "intervention_group":           "group_comparison",
+    "intervention group":           "group_comparison",
+    "intervention":                 "group_comparison",
+    "control_group":                "group_comparison",
+    "control group":                "group_comparison",
+    "treatment":                    "group_comparison",
+    "comparison":                   "group_comparison",
+
+    "effect_sizes":                 "effect_size",
+    "effect sizes":                 "effect_size",
+    "effect size (95% ci)":         "effect_size",
+    "estimate":                     "effect_size",
+
+    "study_type":                   "study_design",
+    "study type":                   "study_design",
+    "research_design":              "study_design",
+    "research design":              "study_design",
+    "trial_design":                 "study_design",
+    "trial design":                 "study_design",
+
+    "city":                         "setting",
+    "location":                     "setting",
+
+    "funding":                      "notes",
+    "funding_source":               "notes",
+    "conflicts_of_interest":        "notes",
+    "citation":                     "notes",
+    "cite_key":                     "study_label",
+    "cite key":                     "study_label",
+    "citation_key":                 "study_label",
+    "bibtex_key":                   "study_label",
+
+    "pages":                        "first_page",
+
+    # ── SciSpace (scispace.com / typeset.io) export columns ──────────────────
+    "paper_type":                   "publication_type",
+    "paper type":                   "publication_type",
+    "document_type":                "publication_type",
+    "document type":                "publication_type",
+
+    "publication_date":             "year",
+    "publication date":             "year",
+    "pub_date":                     "year",
+    "date":                         "year",
+    "published":                    "year",
+
+    "research_topics":              "key_findings",
+    "research topics":              "key_findings",
+    "topics":                       "key_findings",
+    "keywords":                     "key_findings",
+    "keyword":                      "key_findings",
+
+    "tldr":                         "findings",
+    "tl;dr":                        "findings",
+    "summary":                      "findings",
+    "resumen_ejecutivo":            "findings",
+
+    "citations":                    "notes",
+    "cited_by":                     "notes",
+    "num_citations":                "notes",
+    "citation_count":               "notes",
+
+    "arxiv_id":                     "doi",
+    "pmid":                         "doi",
+    "pubmed_id":                    "doi",
+    "semantic_scholar_id":          "notes",
+
+    "open_access":                  "notes",
+    "pdf_url":                      "url",
+    "pdf url":                      "url",
+    "semantic_url":                 "url",
 }
 
 _INT_FIELDS = {
@@ -257,6 +367,10 @@ def _coerce(value: Any, field: str) -> Any:
         return None
     if field in _INT_FIELDS:
         try:
+            # Handle date strings like "2020-01-01" for year field
+            s = str(value).strip()
+            if field == "year" and len(s) >= 4 and s[:4].isdigit():
+                return int(s[:4])
             return int(float(value))
         except (ValueError, TypeError):
             return None
@@ -330,8 +444,12 @@ def parse_file(content: bytes, filename: str) -> list[dict]:
         if not study.get("study_label"):
             authors = study.get("authors", "")
             year = study.get("year", "")
+            title = study.get("title", "")
             if authors or year:
                 study["study_label"] = f"{authors} {year}".strip()
+            elif title:
+                # Fallback: first 60 chars of title
+                study["study_label"] = title[:60].rstrip()
 
         studies.append(study)
 
