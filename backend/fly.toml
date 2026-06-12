@@ -32,5 +32,5 @@ primary_region = "dfw"   # Dallas — closest to Mexico/LATAM
 
 [[vm]]
   size = "shared-cpu-1x"
-  memory = "1gb"
+  memory = "2gb"
   count = 1

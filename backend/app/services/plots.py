@@ -20,9 +20,9 @@ from typing import Optional as _Opt
 from .statistics import MetaResult, back_transform
 
 
-def _b64(fig) -> str:
+def _b64(fig, dpi: int = 80) -> str:
     buf = io.BytesIO()
-    fig.savefig(buf, format="png", dpi=100, bbox_inches="tight",
+    fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight",
                 facecolor="white", edgecolor="none")
     buf.seek(0)
     encoded = base64.b64encode(buf.read()).decode("utf-8")
@@ -38,14 +38,26 @@ def generate_forest_plot(result: MetaResult, title: str = "",
     """Return base64 PNG of the forest plot."""
     plt.close("all")
     gc.collect()
+    try:
+        return _forest_plot_inner(result, title, null_value, fig_width=9)
+    except (MemoryError, Exception) as exc:
+        if "bad_alloc" in str(exc) or isinstance(exc, MemoryError):
+            plt.close("all")
+            gc.collect()
+            return _forest_plot_inner(result, title, null_value, fig_width=7)
+        raise
+
+
+def _forest_plot_inner(result: MetaResult, title: str,
+                        null_value: Optional[float], fig_width: int = 9) -> str:
     bt = lambda v: back_transform(v, result.effect_measure)
     is_log = result.effect_measure in ("OR", "RR")
     null = null_value if null_value is not None else (1.0 if is_log else 0.0)
 
     studies = result.studies
     k = len(studies)
-    fig_height = max(5, min(k * 0.45 + 3, 24))
-    fig, ax = plt.subplots(figsize=(10, fig_height))
+    fig_height = max(4, min(k * 0.4 + 2.5, 20))
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height))
 
     y_positions = list(range(k, 0, -1))
     colors = {"low": "#2ecc71", "some_concerns": "#f39c12", "high": "#e74c3c"}
