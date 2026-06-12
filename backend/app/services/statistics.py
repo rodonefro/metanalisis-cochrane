@@ -265,6 +265,64 @@ def back_transform(value: float, effect_measure: str) -> float:
     return value
 
 
+def meta_result_from_dict(d: dict) -> MetaResult:
+    """Reconstruct a MetaResult from a result_to_dict() output.
+    Stored values are back-transformed (original scale); this re-applies log for OR/RR
+    so the MetaResult is in the expected internal (log) scale for visualization.
+    Variances are approximated from stored CIs (sufficient for forest/funnel plots).
+    """
+    em = d.get("effect_measure", "OR")
+    model = d.get("model", "random")
+    is_log = em in ("OR", "RR")
+    z = 1.96
+
+    def _inv(v: float) -> float:
+        return math.log(max(float(v), 1e-10)) if is_log else float(v)
+
+    study_effects: List[StudyEffect] = []
+    for s in d.get("studies", []):
+        eff = _inv(s["effect"])
+        ci_lo = _inv(s["ci_lower"])
+        ci_hi = _inv(s["ci_upper"])
+        se = (ci_hi - ci_lo) / (2 * z)
+        var = max(se ** 2, 1e-10)
+        study_effects.append(StudyEffect(
+            study_label=s["label"],
+            effect=eff,
+            variance=var,
+            weight_fe=float(s.get("weight_fe") or 0),
+            weight_re=float(s.get("weight_re") or 0),
+            ci_lower=ci_lo,
+            ci_upper=ci_hi,
+            year=s.get("year"),
+        ))
+
+    p = d.get("pooled", {})
+    h = d.get("heterogeneity", {})
+    pi = d.get("prediction_interval", {}) or {}
+    default_neutral = 1.0 if is_log else 0.0
+
+    return MetaResult(
+        studies=study_effects,
+        pooled_effect=_inv(p.get("effect", default_neutral)),
+        pooled_lower=_inv(p.get("ci_lower", default_neutral)),
+        pooled_upper=_inv(p.get("ci_upper", default_neutral)),
+        pooled_se=float(p.get("se", 0)),
+        Q=float(h.get("Q", 0)),
+        Q_df=int(h.get("Q_df", 0)),
+        Q_pvalue=float(h.get("Q_pvalue", 1)),
+        I2=float(h.get("I2", 0)),
+        tau2=float(h.get("tau2", 0)),
+        tau=float(h.get("tau", 0)),
+        model=model,
+        effect_measure=em,
+        k=int(d.get("k", len(study_effects))),
+        total_n=int(d.get("total_n", 0)),
+        pi_lower=_inv(pi["lower"]) if pi.get("lower") is not None else None,
+        pi_upper=_inv(pi["upper"]) if pi.get("upper") is not None else None,
+    )
+
+
 def result_to_dict(result: MetaResult) -> dict:
     """Serialize MetaResult to JSON-compatible dict (back-transformed)."""
     bt = lambda v: back_transform(v, result.effect_measure)

@@ -36,6 +36,8 @@ def _b64(fig) -> str:
 def generate_forest_plot(result: MetaResult, title: str = "",
                           null_value: Optional[float] = None) -> str:
     """Return base64 PNG of the forest plot."""
+    plt.close("all")
+    gc.collect()
     bt = lambda v: back_transform(v, result.effect_measure)
     is_log = result.effect_measure in ("OR", "RR")
     null = null_value if null_value is not None else (1.0 if is_log else 0.0)
@@ -155,6 +157,8 @@ def generate_forest_plot(result: MetaResult, title: str = "",
 
 def generate_funnel_plot(result: MetaResult, title: str = "") -> str:
     """Return base64 PNG of the funnel plot (SE vs effect)."""
+    plt.close("all")
+    gc.collect()
     bt = lambda v: back_transform(v, result.effect_measure)
     is_log = result.effect_measure in ("OR", "RR")
     null = 1.0 if is_log else 0.0
@@ -446,6 +450,8 @@ def generate_rob_traffic_light(studies_rob: list) -> str:
 
 def generate_grade_table(result_dict: dict, studies: list, outcome: str = "") -> str:
     """Generate a GRADE evidence profile table as base64 PNG."""
+    plt.close("all")
+    gc.collect()
     import math as _math
 
     het = result_dict.get("heterogeneity", {}) or {}
@@ -542,18 +548,19 @@ def generate_grade_table(result_dict: dict, studies: list, outcome: str = "") ->
         quality_label,
         effect_str,
     ]
-    cell_colors = [
-        ["#f0f4ff"],  # outcome
-        ["#f0f4ff"],  # k
-        ["#f0f4ff"],  # N
-        [rob_color + "55"],
-        [incon_color + "55"],
-        [indir_color + "55"],
-        [impr_color + "55"],
-        [pub_color + "55"],
-        [quality_color + "44"],
-        ["#f0f4ff"],
-    ]
+    # cellColours must match cellText shape: (n_data_rows, n_cols) = (1, 10)
+    cell_colors = [[
+        "#f0f4ff",           # outcome
+        "#f0f4ff",           # k
+        "#f0f4ff",           # N
+        rob_color + "55",
+        incon_color + "55",
+        indir_color + "55",
+        impr_color + "55",
+        pub_color + "55",
+        quality_color + "44",
+        "#f0f4ff",           # effect estimate
+    ]]
 
     tbl = ax.table(
         cellText=[row],

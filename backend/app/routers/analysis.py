@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from ..database import get_db
 from ..models import Review, Study, Analysis
 from ..schemas import AnalysisOut
-from ..services.statistics import run_meta_analysis, result_to_dict
+from ..services.statistics import run_meta_analysis, result_to_dict, meta_result_from_dict
 from ..services.plots import generate_forest_plot, generate_funnel_plot, generate_rob_traffic_light, generate_prisma_2020, generate_grade_table  # used by on-demand endpoints
 from ..services.ai_generator import generate_prisma_autofill, screen_studies_with_ai, extract_quantitative_data
 
@@ -110,11 +110,9 @@ def get_forest_plot(review_id: int, db: Session = Depends(get_db)):
     analysis = _get_latest_or_404(review_id, db)
     if analysis.forest_plot_b64:
         return {"forest_b64": analysis.forest_plot_b64}
-    # Regenerate from stored results
     try:
-        from ..services.statistics import MetaResult
         result_dict = json.loads(analysis.results_json)
-        result = run_meta_analysis(_study_dicts(review_id, db), analysis.effect_measure, analysis.model_type)
+        result = meta_result_from_dict(result_dict)
         b64 = generate_forest_plot(result, title=review.title or "Forest Plot")
         analysis.forest_plot_b64 = b64
         db.commit()
@@ -130,7 +128,8 @@ def get_funnel_plot(review_id: int, db: Session = Depends(get_db)):
     if analysis.funnel_plot_b64:
         return {"funnel_b64": analysis.funnel_plot_b64}
     try:
-        result = run_meta_analysis(_study_dicts(review_id, db), analysis.effect_measure, analysis.model_type)
+        result_dict = json.loads(analysis.results_json)
+        result = meta_result_from_dict(result_dict)
         b64 = generate_funnel_plot(result, title="Funnel Plot")
         analysis.funnel_plot_b64 = b64
         db.commit()
@@ -189,16 +188,30 @@ def autofill_prisma(review_id: int, db: Session = Depends(get_db)):
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")
 
-    study_count = db.query(Study).filter(Study.review_id == review_id).count()
-    if study_count == 0:
+    total_count = db.query(Study).filter(Study.review_id == review_id).count()
+    if total_count == 0:
         raise HTTPException(status_code=422, detail="Agrega estudios a la revisión antes de auto-generar el PRISMA.")
+
+    included_count = db.query(Study).filter(
+        Study.review_id == review_id,
+        Study.included == True,  # noqa: E712
+    ).count()
 
     review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
 
     try:
-        data = generate_prisma_autofill(review_dict, study_count)
+        data = generate_prisma_autofill(review_dict, included_count)
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Error en generación IA del PRISMA: {exc}")
+
+    # Override key numbers with real DB values so the diagram is consistent
+    assessed = data.get("prisma_assessed") or total_count
+    if assessed < included_count:
+        assessed = total_count
+    data["prisma_included"] = included_count
+    data["prisma_reports_included"] = included_count
+    data["prisma_assessed"] = assessed
+    data["prisma_excluded_eligibility"] = max(0, assessed - included_count)
 
     # Persist generated values to the review
     for field, value in data.items():
@@ -208,7 +221,7 @@ def autofill_prisma(review_id: int, db: Session = Depends(get_db)):
     db.refresh(review)
 
     return {
-        "message": f"PRISMA auto-generado para {study_count} estudios incluidos",
+        "message": f"PRISMA auto-generado: {included_count} incluidos de {total_count} identificados",
         "data": data,
     }
 
