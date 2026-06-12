@@ -1,8 +1,8 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
-import { ArrowLeft, Download, Save } from 'lucide-react'
+import { ArrowLeft, Download, Save, CheckCircle2, Loader2 } from 'lucide-react'
 import { getReview, updateReview, generateSection, exportPdf, type Review } from '../services/api'
 import SectionEditor from '../components/SectionEditor'
 import StudiesTable from '../components/StudiesTable'
@@ -36,6 +36,8 @@ export default function ReviewEditor() {
   const [generatingSection, setGeneratingSection] = useState<string | null>(null)
   const [pico, setPico] = useState<Partial<Review>>({})
   const [picoDirty, setPicoDirty] = useState(false)
+  const [savedAt, setSavedAt] = useState<Date | null>(null)
+  const autoSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const { data: review, isLoading } = useQuery({
     queryKey: ['review', reviewId],
@@ -58,11 +60,21 @@ export default function ReviewEditor() {
     mutationFn: (data: Partial<Review>) => updateReview(reviewId, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['review', reviewId] })
-      toast.success('Guardado correctamente')
+      setSavedAt(new Date())
       setPicoDirty(false)
     },
     onError: () => toast.error('Error al guardar'),
   })
+
+  // Auto-save PICO 2 seconds after last change
+  const handlePicoChange = (field: string, value: string) => {
+    setPico((p) => ({ ...p, [field]: value }))
+    setPicoDirty(true)
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current)
+    autoSaveTimer.current = setTimeout(() => {
+      updateMutation.mutate({ ...pico, [field]: value } as Partial<Review>)
+    }, 2000)
+  }
 
   const handleSaveSection = (field: keyof Review) => (text: string) => {
     updateMutation.mutate({ [field]: text } as Partial<Review>)
@@ -127,64 +139,78 @@ export default function ReviewEditor() {
             <span className="capitalize">{review.status}</span>
           </div>
         </div>
-        <button onClick={handleExportPdf} className="btn-secondary">
-          <Download size={16} /> Exportar PDF (Export PDF)
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Save indicator */}
+          {updateMutation.isPending ? (
+            <span className="flex items-center gap-1.5 text-xs text-gray-400">
+              <Loader2 size={13} className="animate-spin" /> Guardando...
+            </span>
+          ) : savedAt ? (
+            <span className="flex items-center gap-1.5 text-xs text-green-600">
+              <CheckCircle2 size={13} /> Guardado {savedAt.toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit' })}
+            </span>
+          ) : picoDirty ? (
+            <span className="text-xs text-amber-500">Cambios sin guardar</span>
+          ) : null}
+
+          <button
+            onClick={() => { updateMutation.mutate(pico); toast.success('Guardado') }}
+            disabled={updateMutation.isPending}
+            className="btn-primary"
+          >
+            <Save size={15} /> Guardar
+          </button>
+          <button onClick={handleExportPdf} className="btn-secondary">
+            <Download size={16} /> Exportar PDF
+          </button>
+        </div>
       </div>
 
       {/* PICO quick edit */}
       <div className="card p-5 mb-4">
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide">PICO y Configuración (Settings)</h3>
-          {picoDirty && (
-            <button onClick={() => updateMutation.mutate(pico)} className="btn-secondary text-xs">
-              <Save size={13} /> Guardar PICO (Save)
-            </button>
-          )}
-        </div>
+        <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
+          PICO y Configuración
+        </h3>
         <div className="grid grid-cols-2 gap-3">
           {[
-            { field: 'population', label: 'Población (Population - P)' },
-            { field: 'intervention', label: 'Intervención (Intervention - I)' },
-            { field: 'comparison', label: 'Comparación (Comparison - C)' },
-            { field: 'outcomes', label: 'Desenlaces (Outcomes - O)' },
+            { field: 'population',   label: 'Población (P)' },
+            { field: 'intervention', label: 'Intervención (I)' },
+            { field: 'comparison',   label: 'Comparación (C)' },
+            { field: 'outcomes',     label: 'Desenlaces (O)' },
           ].map(({ field, label }) => (
             <div key={field}>
               <label className="label">{label}</label>
               <input
                 className="input text-sm"
                 value={(pico as any)[field] || ''}
-                onChange={(e) => {
-                  setPico((p) => ({ ...p, [field]: e.target.value }))
-                  setPicoDirty(true)
-                }}
+                onChange={(e) => handlePicoChange(field, e.target.value)}
               />
             </div>
           ))}
           <div>
-            <label className="label">Medida del efecto (Effect measure)</label>
+            <label className="label">Medida del efecto</label>
             <select
               className="input text-sm"
               value={pico.effect_measure || 'OR'}
-              onChange={(e) => { setPico((p) => ({ ...p, effect_measure: e.target.value })); setPicoDirty(true) }}
+              onChange={(e) => handlePicoChange('effect_measure', e.target.value)}
             >
-              <option value="OR">OR – Razón de Momios (Odds Ratio)</option>
-              <option value="RR">RR – Riesgo Relativo (Risk Ratio)</option>
-              <option value="RD">RD – Diferencia de Riesgos (Risk Difference)</option>
-              <option value="MD">MD – Diferencia de Medias (Mean Difference)</option>
-              <option value="SMD">SMD – DM Estandarizada (Standardised MD)</option>
-              <option value="PRECALCULATED">Precalculado (Pre-calculated ES)</option>
+              <option value="OR">OR – Odds Ratio</option>
+              <option value="RR">RR – Riesgo Relativo</option>
+              <option value="RD">RD – Diferencia de Riesgos</option>
+              <option value="MD">MD – Diferencia de Medias</option>
+              <option value="SMD">SMD – DM Estandarizada</option>
+              <option value="PRECALCULATED">Precalculado</option>
             </select>
           </div>
           <div>
-            <label className="label">Modelo (Model)</label>
+            <label className="label">Modelo estadístico</label>
             <select
               className="input text-sm"
               value={pico.model_type || 'random'}
-              onChange={(e) => { setPico((p) => ({ ...p, model_type: e.target.value })); setPicoDirty(true) }}
+              onChange={(e) => handlePicoChange('model_type', e.target.value)}
             >
-              <option value="random">Efectos aleatorios (Random-effects)</option>
-              <option value="fixed">Efectos fijos (Fixed-effects)</option>
+              <option value="random">Efectos aleatorios</option>
+              <option value="fixed">Efectos fijos</option>
             </select>
           </div>
         </div>

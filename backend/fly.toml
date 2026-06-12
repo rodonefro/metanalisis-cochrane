@@ -20,6 +20,9 @@ primary_region = "dfw"   # Dallas — closest to Mexico/LATAM
   auto_start_machines = true
   min_machines_running = 0
 
+[deploy]
+  strategy = "immediate"
+
   [[http_service.checks]]
     grace_period = "10s"
     interval = "30s"
@@ -30,3 +33,4 @@ primary_region = "dfw"   # Dallas — closest to Mexico/LATAM
 [[vm]]
   size = "shared-cpu-1x"
   memory = "512mb"
+  count = 1
