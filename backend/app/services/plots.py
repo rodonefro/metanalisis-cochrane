@@ -437,3 +437,146 @@ def generate_rob_traffic_light(studies_rob: list) -> str:
                  fontweight="bold", pad=10)
     plt.tight_layout()
     return _b64(fig)
+
+
+def generate_grade_table(result_dict: dict, studies: list, outcome: str = "") -> str:
+    """Generate a GRADE evidence profile table as base64 PNG."""
+    import math as _math
+
+    het = result_dict.get("heterogeneity", {}) or {}
+    pooled = result_dict.get("pooled", {}) or {}
+    k = result_dict.get("k", len(studies))
+    total_n = result_dict.get("total_n", 0)
+    i2 = het.get("I2", 0) or 0
+    effect = pooled.get("effect")
+    ci_lo = pooled.get("ci_lower")
+    ci_hi = pooled.get("ci_upper")
+    em = result_dict.get("effect_measure", "ES")
+
+    # --- Auto-rate GRADE domains ---
+    # Risk of bias: count RoB fields
+    high_risk = sum(
+        1 for s in studies
+        for k_ in ["rob_random_sequence","rob_allocation_concealment",
+                   "rob_blinding_participants","rob_blinding_outcome",
+                   "rob_incomplete_data","rob_selective_reporting"]
+        if s.get(k_) == "high"
+    )
+    if high_risk == 0:
+        rob_rating, rob_color = "Not serious", "#27ae60"
+    elif high_risk <= 2:
+        rob_rating, rob_color = "Serious", "#f39c12"
+    else:
+        rob_rating, rob_color = "Very serious", "#e74c3c"
+
+    # Inconsistency (I²)
+    if i2 < 25:
+        incon_rating, incon_color = "Not serious", "#27ae60"
+    elif i2 < 50:
+        incon_rating, incon_color = "Serious", "#f39c12"
+    else:
+        incon_rating, incon_color = "Very serious", "#e74c3c"
+
+    # Indirectness (manual → default)
+    indir_rating, indir_color = "Not serious", "#27ae60"
+
+    # Imprecision: CI width relative to effect
+    if effect and ci_lo is not None and ci_hi is not None and effect != 0:
+        ci_width = ci_hi - ci_lo
+        rel_width = abs(ci_width / effect) if effect else 999
+        if rel_width < 0.5 and total_n >= 300:
+            impr_rating, impr_color = "Not serious", "#27ae60"
+        elif rel_width < 1.0 or total_n >= 100:
+            impr_rating, impr_color = "Serious", "#f39c12"
+        else:
+            impr_rating, impr_color = "Very serious", "#e74c3c"
+    else:
+        impr_rating, impr_color = "Serious", "#f39c12"
+
+    # Publication bias
+    if k >= 10:
+        pub_rating, pub_color = "Undetected", "#27ae60"
+    elif k >= 5:
+        pub_rating, pub_color = "Undetected", "#27ae60"
+    else:
+        pub_rating, pub_color = "Undetected*", "#f39c12"
+
+    # Overall quality
+    downgrades = sum([
+        1 if rob_rating == "Serious" else (2 if rob_rating == "Very serious" else 0),
+        1 if incon_rating == "Serious" else (2 if incon_rating == "Very serious" else 0),
+        1 if indir_rating == "Serious" else (2 if indir_rating == "Very serious" else 0),
+        1 if impr_rating == "Serious" else (2 if impr_rating == "Very serious" else 0),
+    ])
+    quality_labels = ["⊕⊕⊕⊕ HIGH", "⊕⊕⊕◯ MODERATE", "⊕⊕◯◯ LOW", "⊕◯◯◯ VERY LOW"]
+    quality_colors = ["#27ae60", "#2980b9", "#f39c12", "#e74c3c"]
+    q_idx = min(downgrades, 3)
+    quality_label = quality_labels[q_idx]
+    quality_color = quality_colors[q_idx]
+
+    effect_str = "—"
+    if effect is not None and ci_lo is not None and ci_hi is not None:
+        effect_str = f"{em} {effect:.2f} (95% CI {ci_lo:.2f}–{ci_hi:.2f})"
+
+    # --- Build figure ---
+    fig, ax = plt.subplots(figsize=(14, 4.5))
+    ax.axis("off")
+
+    cols = ["Outcome", "Studies (k)", "Participants (N)", "Risk of\nbias",
+            "Inconsistency\n(I²)", "Indirectness", "Imprecision",
+            "Publication\nbias", "GRADE\nCertainty", "Effect estimate"]
+    row = [
+        outcome or "Primary outcome",
+        str(k),
+        str(total_n),
+        rob_rating,
+        f"{incon_rating}\n(I²={i2:.0f}%)",
+        indir_rating,
+        impr_rating,
+        pub_rating,
+        quality_label,
+        effect_str,
+    ]
+    cell_colors = [
+        ["#f0f4ff"],  # outcome
+        ["#f0f4ff"],  # k
+        ["#f0f4ff"],  # N
+        [rob_color + "55"],
+        [incon_color + "55"],
+        [indir_color + "55"],
+        [impr_color + "55"],
+        [pub_color + "55"],
+        [quality_color + "44"],
+        ["#f0f4ff"],
+    ]
+
+    tbl = ax.table(
+        cellText=[row],
+        colLabels=cols,
+        cellLoc="center",
+        loc="center",
+        cellColours=cell_colors,
+    )
+    tbl.auto_set_font_size(False)
+    tbl.set_fontsize(9)
+    tbl.scale(1, 3.5)
+
+    for (r, c), cell in tbl.get_celld().items():
+        cell.set_edgecolor("#cccccc")
+        if r == 0:
+            cell.set_facecolor("#1a3a5c")
+            cell.set_text_props(color="white", fontweight="bold", fontsize=8.5)
+
+    ax.set_title(
+        "GRADE Evidence Profile — Certainty of Evidence",
+        fontsize=12, fontweight="bold", pad=14, color="#1a3a5c",
+    )
+    fig.text(
+        0.01, 0.02,
+        "* <10 studies — publication bias assessment limited  |  "
+        "Indirectness rated manually (default: Not serious)  |  "
+        "GRADE: Grading of Recommendations Assessment, Development and Evaluation",
+        fontsize=6.5, color="#666666",
+    )
+    plt.tight_layout(rect=[0, 0.06, 1, 1])
+    return _b64(fig)

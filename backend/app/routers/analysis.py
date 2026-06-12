@@ -7,7 +7,7 @@ from ..database import get_db
 from ..models import Review, Study, Analysis
 from ..schemas import AnalysisOut
 from ..services.statistics import run_meta_analysis, result_to_dict
-from ..services.plots import generate_forest_plot, generate_funnel_plot, generate_rob_traffic_light, generate_prisma_2020
+from ..services.plots import generate_forest_plot, generate_funnel_plot, generate_rob_traffic_light, generate_prisma_2020, generate_grade_table
 
 router = APIRouter(prefix="/reviews/{review_id}/analysis", tags=["analysis"])
 
@@ -94,6 +94,72 @@ def list_analyses(review_id: int, db: Session = Depends(get_db)):
         .order_by(Analysis.created_at.desc())
         .all()
     )
+
+
+def _get_latest_or_404(review_id: int, db: Session):
+    analysis = (
+        db.query(Analysis)
+        .filter(Analysis.review_id == review_id)
+        .order_by(Analysis.created_at.desc())
+        .first()
+    )
+    if not analysis:
+        raise HTTPException(status_code=404, detail="No analysis found. Run the meta-analysis first.")
+    return analysis
+
+
+@router.get("/forest")
+def get_forest_plot(review_id: int, db: Session = Depends(get_db)):
+    """Return (or regenerate) the forest plot for the latest analysis."""
+    review = db.query(Review).filter(Review.id == review_id).first()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+    analysis = _get_latest_or_404(review_id, db)
+    if analysis.forest_plot_b64:
+        return {"forest_b64": analysis.forest_plot_b64}
+    # Regenerate from stored results
+    try:
+        from ..services.statistics import MetaResult
+        result_dict = json.loads(analysis.results_json)
+        result = run_meta_analysis(_study_dicts(review_id, db), analysis.effect_measure, analysis.model_type)
+        b64 = generate_forest_plot(result, title=review.title or "Forest Plot")
+        analysis.forest_plot_b64 = b64
+        db.commit()
+        return {"forest_b64": b64}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error generating forest plot: {exc}")
+
+
+@router.get("/funnel")
+def get_funnel_plot(review_id: int, db: Session = Depends(get_db)):
+    """Return (or regenerate) the funnel plot for the latest analysis."""
+    analysis = _get_latest_or_404(review_id, db)
+    if analysis.funnel_plot_b64:
+        return {"funnel_b64": analysis.funnel_plot_b64}
+    try:
+        result = run_meta_analysis(_study_dicts(review_id, db), analysis.effect_measure, analysis.model_type)
+        b64 = generate_funnel_plot(result, title="Funnel Plot")
+        analysis.funnel_plot_b64 = b64
+        db.commit()
+        return {"funnel_b64": b64}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error generating funnel plot: {exc}")
+
+
+@router.get("/grade")
+def get_grade_table(review_id: int, db: Session = Depends(get_db)):
+    """Generate a GRADE evidence profile table."""
+    review = db.query(Review).filter(Review.id == review_id).first()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+    analysis = _get_latest_or_404(review_id, db)
+    try:
+        result_dict = json.loads(analysis.results_json)
+        studies = _study_dicts(review_id, db)
+        b64 = generate_grade_table(result_dict, studies, outcome=review.title or "")
+        return {"grade_b64": b64}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error generating GRADE table: {exc}")
 
 
 @router.get("/prisma")
