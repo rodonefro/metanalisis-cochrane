@@ -39,36 +39,35 @@ def generate_forest_plot(result: MetaResult, title: str = "",
     plt.close("all")
     gc.collect()
     try:
-        return _forest_plot_inner(result, title, null_value, fig_width=9)
+        return _forest_plot_inner(result, title, null_value, fig_width=11)
     except (MemoryError, Exception) as exc:
         if "bad_alloc" in str(exc) or isinstance(exc, MemoryError):
             plt.close("all")
             gc.collect()
-            return _forest_plot_inner(result, title, null_value, fig_width=7)
+            return _forest_plot_inner(result, title, null_value, fig_width=9)
         raise
 
 
 def _forest_plot_inner(result: MetaResult, title: str,
-                        null_value: Optional[float], fig_width: int = 9) -> str:
+                        null_value: Optional[float], fig_width: int = 11) -> str:
     bt = lambda v: back_transform(v, result.effect_measure)
     is_log = result.effect_measure in ("OR", "RR")
     null = null_value if null_value is not None else (1.0 if is_log else 0.0)
 
     studies = result.studies
     k = len(studies)
-    fig_height = max(4, min(k * 0.4 + 2.5, 20))
+    fig_height = max(5, min(k * 0.5 + 3.0, 24))
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
 
     y_positions = list(range(k, 0, -1))
-    colors = {"low": "#2ecc71", "some_concerns": "#f39c12", "high": "#e74c3c"}
 
     # Column headers — use get_yaxis_transform (x=axes fraction, y=data coords)
-    ax.text(-0.02, k + 1.5, "Study", fontsize=9, fontweight="bold", ha="right", va="center",
+    ax.text(-0.02, k + 1.5, "Study", fontsize=11, fontweight="bold", ha="right", va="center",
             transform=ax.get_yaxis_transform())
-    ax.text(1.01, k + 1.5, f"{result.effect_measure} (95% CI)", fontsize=9,
+    ax.text(1.01, k + 1.5, f"{result.effect_measure} (95% CI)", fontsize=11,
             fontweight="bold", ha="left", va="center",
             transform=ax.get_yaxis_transform())
-    ax.text(1.25, k + 1.5, "Weight (%)", fontsize=9, fontweight="bold",
+    ax.text(1.26, k + 1.5, "Weight (%)", fontsize=11, fontweight="bold",
             ha="right", va="center",
             transform=ax.get_yaxis_transform())
 
@@ -87,7 +86,7 @@ def _forest_plot_inner(result: MetaResult, title: str,
         x_hi = max(all_vals) + span * 0.15
 
     # Null line
-    ax.axvline(x=null, color="black", linewidth=0.8, linestyle="--", alpha=0.6)
+    ax.axvline(x=null, color="black", linewidth=0.9, linestyle="--", alpha=0.6)
 
     # Study rows
     for i, (s, y) in enumerate(zip(studies, y_positions)):
@@ -95,26 +94,26 @@ def _forest_plot_inner(result: MetaResult, title: str,
         lo = bt(s.ci_lower)
         hi = bt(s.ci_upper)
         weight = s.weight_re if result.model == "random" else s.weight_fe
-        box_size = max(0.04, weight / 100 * 0.6)
+        box_size = max(0.05, weight / 100 * 0.65)
 
         # CI line
-        ax.plot([lo, hi], [y, y], color="#2c3e50", linewidth=1.2, zorder=2)
+        ax.plot([lo, hi], [y, y], color="#2c3e50", linewidth=1.4, zorder=2)
         # Square
         rect = mpatches.FancyBboxPatch(
             (effect - box_size / 2, y - box_size / 4),
             box_size, box_size / 2,
             boxstyle="square,pad=0",
-            facecolor="#2980b9", edgecolor="#1a252f", linewidth=0.5, zorder=3,
+            facecolor="#2980b9", edgecolor="#1a252f", linewidth=0.6, zorder=3,
         )
         ax.add_patch(rect)
 
         # Labels
-        ax.text(-0.02, y, s.study_label, fontsize=8, ha="right", va="center",
+        ax.text(-0.02, y, s.study_label, fontsize=10, ha="right", va="center",
                 transform=ax.get_yaxis_transform())
         ci_text = f"{effect:.2f} [{lo:.2f}, {hi:.2f}]"
-        ax.text(1.01, y, ci_text, fontsize=7.5, ha="left", va="center",
+        ax.text(1.01, y, ci_text, fontsize=9.5, ha="left", va="center",
                 transform=ax.get_yaxis_transform())
-        ax.text(1.25, y, f"{weight:.1f}", fontsize=7.5, ha="right", va="center",
+        ax.text(1.26, y, f"{weight:.1f}", fontsize=9.5, ha="right", va="center",
                 transform=ax.get_yaxis_transform())
 
     # Pooled diamond
@@ -122,47 +121,42 @@ def _forest_plot_inner(result: MetaResult, title: str,
     p_lo = bt(result.pooled_lower)
     p_hi = bt(result.pooled_upper)
     diamond_y = 0
-    diamond = mpatches.FancyArrow(
-        (p_lo + p_hi) / 2, diamond_y, 0, 0,
-        width=0.35, head_width=0, head_length=0,
-        facecolor="#c0392b", edgecolor="#922b21", linewidth=0.8,
-    )
-    # Use Polygon for proper diamond shape
     diamond_pts = np.array([
         [p_lo, diamond_y],
-        [p_eff, diamond_y + 0.28],
+        [p_eff, diamond_y + 0.30],
         [p_hi, diamond_y],
-        [p_eff, diamond_y - 0.28],
+        [p_eff, diamond_y - 0.30],
     ])
     diamond_patch = plt.Polygon(diamond_pts, closed=True,
-                                facecolor="#c0392b", edgecolor="#922b21", linewidth=0.8, zorder=4)
+                                facecolor="#c0392b", edgecolor="#922b21", linewidth=0.9, zorder=4)
     ax.add_patch(diamond_patch)
 
     # Separator line
-    ax.axhline(y=0.6, color="black", linewidth=0.8)
+    ax.axhline(y=0.6, color="black", linewidth=0.9)
 
     # Pooled label
     ax.text(-0.02, diamond_y, f"Total ({result.model.capitalize()} effects, k={result.k})",
-            fontsize=8.5, fontweight="bold", ha="right", va="center",
+            fontsize=10.5, fontweight="bold", ha="right", va="center",
             transform=ax.get_yaxis_transform())
     ci_pooled = f"{p_eff:.2f} [{p_lo:.2f}, {p_hi:.2f}]"
-    ax.text(1.01, diamond_y, ci_pooled, fontsize=8, fontweight="bold",
+    ax.text(1.01, diamond_y, ci_pooled, fontsize=10, fontweight="bold",
             ha="left", va="center", transform=ax.get_yaxis_transform())
 
     # Heterogeneity box
     het = (f"Heterogeneity: Q={result.Q:.1f} (df={result.Q_df}, "
-           f"p={result.Q_pvalue:.3f}), I²={result.I2:.0f}%, τ²={result.tau2:.3f}")
-    ax.text(0.5, -1.0, het, fontsize=7.5, ha="center", va="center",
+           f"p={result.Q_pvalue:.3f}),  I²={result.I2:.0f}%,  τ²={result.tau2:.3f}")
+    ax.text(0.5, -1.0, het, fontsize=9.5, ha="center", va="center",
             transform=ax.get_yaxis_transform(),
-            bbox=dict(facecolor="#ecf0f1", edgecolor="gray", boxstyle="round,pad=0.3"))
+            bbox=dict(facecolor="#ecf0f1", edgecolor="gray", boxstyle="round,pad=0.35"))
 
     ax.set_xlim(x_lo, x_hi)
     ax.set_ylim(-1.8, k + 2)
     ax.set_yticks([])
     ax.set_xlabel(f"Favours control  ←  {result.effect_measure}  →  Favours intervention",
-                  fontsize=8)
+                  fontsize=10)
+    ax.tick_params(axis="x", labelsize=9.5)
     if title:
-        ax.set_title(title, fontsize=11, fontweight="bold", pad=10)
+        ax.set_title(title, fontsize=13, fontweight="bold", pad=12)
     ax.spines["left"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.spines["top"].set_visible(False)
