@@ -122,9 +122,11 @@ def _cochran_q(effects: List[float], variances: List[float],
 def _tau2_dl(Q: float, k: int, weights: List[float]) -> float:
     """DerSimonian-Laird estimator of between-study variance."""
     df = k - 1
-    C = sum(weights) - sum(w ** 2 for w in weights) / sum(weights)
-    tau2 = max(0.0, (Q - df) / C)
-    return tau2
+    sum_w = sum(weights)
+    C = sum_w - sum(w ** 2 for w in weights) / sum_w if sum_w > 0 else 0.0
+    if C <= 0:
+        return 0.0
+    return max(0.0, (Q - df) / C)
 
 
 def run_meta_analysis(study_data: list, effect_measure: str,
