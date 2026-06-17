@@ -385,6 +385,15 @@ def _coerce(value: Any, field: str) -> Any:
     return str(value).strip() if str(value).strip() else None
 
 
+def _detect_excel_engine(content: bytes) -> str:
+    """Return 'openpyxl' for xlsx (ZIP magic bytes) or 'xlrd' for legacy xls (OLE2 magic)."""
+    if content[:4] == b"PK\x03\x04":
+        return "openpyxl"
+    if content[:8] == b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1":
+        return "xlrd"
+    return "openpyxl"  # unknown — let openpyxl try first
+
+
 def parse_file(content: bytes, filename: str) -> list[dict]:
     """
     Parse Excel or CSV bytes into a list of study dicts.
@@ -394,10 +403,17 @@ def parse_file(content: bytes, filename: str) -> list[dict]:
     try:
         if fname.endswith(".csv"):
             df = pd.read_csv(io.BytesIO(content), dtype=str, keep_default_na=False)
-        elif fname.endswith((".xlsx", ".xls")):
-            engine = "openpyxl" if fname.endswith(".xlsx") else "xlrd"
-            df = pd.read_excel(io.BytesIO(content), dtype=str, keep_default_na=False,
-                               engine=engine)
+        elif fname.endswith((".xlsx", ".xls", ".xlsm", ".xlsb")) or fname.endswith(".xls"):
+            # Detect actual format from magic bytes — the extension can lie
+            # (e.g. Windows 8.3 short names like EFECTI~1.XLS may actually be xlsx)
+            engine = _detect_excel_engine(content)
+            try:
+                df = pd.read_excel(io.BytesIO(content), dtype=str, keep_default_na=False,
+                                   engine=engine)
+            except Exception:
+                fallback = "xlrd" if engine == "openpyxl" else "openpyxl"
+                df = pd.read_excel(io.BytesIO(content), dtype=str, keep_default_na=False,
+                                   engine=fallback)
         else:
             raise ValueError(f"Tipo de archivo no soportado: '{filename}'. Use .csv, .xlsx o .xls")
     except ValueError:
