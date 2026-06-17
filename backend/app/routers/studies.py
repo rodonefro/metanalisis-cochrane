@@ -1,6 +1,6 @@
 import re
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, status
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -38,9 +38,16 @@ def create_study(review_id: int, payload: StudyCreate, db: Session = Depends(get
 async def upload_studies(
     review_id: int,
     file: UploadFile = File(...),
+    source_database: str | None = Form(None),
     db: Session = Depends(get_db),
 ):
-    """Upload an Excel or CSV file to bulk-add studies to a review."""
+    """Upload an Excel or CSV file to bulk-add studies to a review.
+
+    Accepts plain templates as well as exports from Elicit AI or SciSpace AI —
+    columns are auto-detected by name (see file_parser._COLUMN_MAP). The optional
+    source_database label (e.g. "Elicit IA", "SciSpace IA") is stamped on studies
+    that don't already carry one from the file itself.
+    """
     _get_review_or_404(review_id, db)
     content = await file.read()
     try:
@@ -54,6 +61,8 @@ async def upload_studies(
     created = []
     for s in studies_data:
         filtered = {k: v for k, v in s.items() if k in valid_columns}
+        if source_database and not filtered.get("source_database"):
+            filtered["source_database"] = source_database
         study = Study(review_id=review_id, **filtered)
         db.add(study)
         created.append(study)

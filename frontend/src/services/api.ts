@@ -164,9 +164,10 @@ export const updateStudy = (reviewId: number, studyId: number, data: Partial<Stu
   api.put<Study>(`/reviews/${reviewId}/studies/${studyId}`, data).then(r => r.data)
 export const deleteStudy = (reviewId: number, studyId: number) =>
   api.delete(`/reviews/${reviewId}/studies/${studyId}`)
-export const uploadStudies = (reviewId: number, file: File) => {
+export const uploadStudies = (reviewId: number, file: File, sourceDatabase?: string) => {
   const form = new FormData()
   form.append('file', file)
+  if (sourceDatabase) form.append('source_database', sourceDatabase)
   return api.post(`/reviews/${reviewId}/studies/upload`, form).then(r => r.data)
 }
 

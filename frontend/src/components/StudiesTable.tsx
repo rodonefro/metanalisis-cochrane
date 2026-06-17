@@ -27,13 +27,14 @@ export default function StudiesTable({ reviewId, studies }: Props) {
   const [addingNew, setAddingNew] = useState(false)
   const [showDb, setShowDb] = useState(false)
   const [newStudy, setNewStudy] = useState<Partial<Study>>({ included: true })
+  const [importSource, setImportSource] = useState('')
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['review', reviewId] })
   }
 
   const uploadMutation = useMutation({
-    mutationFn: (file: File) => uploadStudies(reviewId, file),
+    mutationFn: (file: File) => uploadStudies(reviewId, file, importSource || undefined),
     onSuccess: (res: any) => {
       toast.success(`${res.created} estudio(s) importado(s)`)
       invalidate()
@@ -156,11 +157,22 @@ export default function StudiesTable({ reviewId, studies }: Props) {
                   e.target.value = ''
                 }}
               />
+              <select
+                className="input text-xs py-1.5 w-auto"
+                value={importSource}
+                onChange={(e) => setImportSource(e.target.value)}
+                title="Indica de dónde viene el archivo a importar (opcional, solo etiqueta la fuente)"
+              >
+                <option value="">Formato: Automático</option>
+                <option value="Elicit IA">Elicit IA</option>
+                <option value="SciSpace IA">SciSpace IA</option>
+              </select>
               <button
                 type="button"
                 onClick={() => fileRef.current?.click()}
                 disabled={uploadMutation.isPending}
                 className="btn-primary text-xs"
+                title="Compatible con plantilla propia, exportaciones de Elicit IA y de SciSpace IA — las columnas se detectan automáticamente"
               >
                 <Upload size={14} />
                 {uploadMutation.isPending ? 'Importando...' : 'Importar Excel/CSV'}
@@ -170,10 +182,10 @@ export default function StudiesTable({ reviewId, studies }: Props) {
                 onClick={() => mergeRef.current?.click()}
                 disabled={mergeMutation.isPending}
                 className="btn-secondary text-xs"
-                title="Selecciona 2 o más archivos de distintas bases de datos — se unificarán eliminando duplicados"
+                title="Combina archivos de Elicit IA, SciSpace IA u otras bases (2 o más) eliminando duplicados por DOI/título"
               >
                 <Merge size={14} />
-                {mergeMutation.isPending ? 'Fusionando...' : 'Fusionar BD'}
+                {mergeMutation.isPending ? 'Fusionando...' : 'Combinar Elicit + SciSpace'}
               </button>
               <a
                 href={`${API_BASE}/static/plantilla_estudios.xlsx`}
