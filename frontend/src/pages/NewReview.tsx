@@ -3,10 +3,17 @@ import { useNavigate } from 'react-router-dom'
 import { useMutation } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { createReview } from '../services/api'
-import { ArrowRight, ArrowLeft, CheckCircle2 } from 'lucide-react'
+import { ArrowRight, ArrowLeft, Info, Target, Filter, CheckCircle2 } from 'lucide-react'
+
+const TABS = [
+  { id: 'general',   label: 'General',   icon: Info },
+  { id: 'pico',      label: 'PICO',      icon: Target },
+  { id: 'criteria',  label: 'Criterios de Inclusión / Exclusión', icon: Filter },
+]
 
 export default function NewReview() {
   const navigate = useNavigate()
+  const [activeTab, setActiveTab] = useState('general')
   const [form, setForm] = useState({
     title: '',
     prospero_id: '',
@@ -24,7 +31,7 @@ export default function NewReview() {
   const mutation = useMutation({
     mutationFn: createReview,
     onSuccess: (review) => {
-      toast.success('¡Revisión creada! Ahora agrega estudios y ejecuta el Pipeline IA.')
+      toast.success('¡Revisión creada! Agrega estudios y ejecuta el Pipeline IA.')
       navigate(`/reviews/${review.id}`)
     },
     onError: () => toast.error('Error al crear la revisión'),
@@ -35,6 +42,7 @@ export default function NewReview() {
   ) => setForm((f) => ({ ...f, [field]: e.target.value }))
 
   const hasCriteria = form.inclusion_criteria.trim() || form.exclusion_criteria.trim()
+  const canSubmit = form.title.trim().length > 0
 
   return (
     <div className="p-8 max-w-2xl mx-auto">
@@ -45,144 +53,196 @@ export default function NewReview() {
         <ArrowLeft size={16} /> Inicio
       </button>
 
-      <h2 className="text-2xl font-bold text-gray-900 mb-2">Nueva Revisión Sistemática</h2>
-      <p className="text-sm text-gray-500 mb-6">
-        Completa la información básica y los criterios de selección. Una vez creada, podrás
-        agregar estudios y ejecutar el <strong>Pipeline IA Completo</strong> con un solo clic.
+      <h2 className="text-2xl font-bold text-gray-900 mb-1">Nueva Revisión Sistemática</h2>
+      <p className="text-sm text-gray-400 mb-6">
+        Completa los campos y define los criterios para que la IA los use al cribar estudios automáticamente.
       </p>
+
+      {/* ── Tabs ── */}
+      <div className="flex border-b border-gray-200 mb-6">
+        {TABS.map((tab) => {
+          const Icon = tab.icon
+          const isActive = activeTab === tab.id
+          const hasBadge = tab.id === 'criteria' && !!hasCriteria
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              className={`flex items-center gap-2 px-4 py-2.5 text-sm font-medium border-b-2 transition-colors relative
+                ${isActive
+                  ? 'border-cochrane-500 text-cochrane-700'
+                  : 'border-transparent text-gray-500 hover:text-gray-700 hover:border-gray-300'
+                }`}
+            >
+              <Icon size={15} />
+              {tab.label}
+              {hasBadge && (
+                <CheckCircle2 size={13} className="text-green-500" />
+              )}
+            </button>
+          )
+        })}
+      </div>
 
       <form
         onSubmit={(e) => {
           e.preventDefault()
+          if (!canSubmit) { toast.error('El título es obligatorio'); return }
           mutation.mutate(form)
         }}
-        className="space-y-6"
+        className="space-y-5"
       >
-        {/* ── Información general ── */}
-        <div className="card p-6 space-y-4">
-          <h3 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">
-            Información de la Revisión
-          </h3>
-          <div>
-            <label className="label">Título *</label>
-            <input
-              className="input"
-              required
-              value={form.title}
-              onChange={set('title')}
-              placeholder="Ej: Efecto de X intervención sobre Y desenlace en Z población"
-            />
-          </div>
-          <div className="grid grid-cols-2 gap-4">
+        {/* ── Tab: General ── */}
+        {activeTab === 'general' && (
+          <div className="card p-6 space-y-4">
             <div>
-              <label className="label">ID PROSPERO</label>
-              <input className="input" value={form.prospero_id} onChange={set('prospero_id')} placeholder="CRD42024..." />
-            </div>
-            <div>
-              <label className="label">Diseño de estudios</label>
-              <input className="input" value={form.study_design} onChange={set('study_design')} placeholder="ECA, CCT..." />
-            </div>
-          </div>
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="label">Medida del efecto</label>
-              <select className="input" value={form.effect_measure} onChange={set('effect_measure')}>
-                <option value="OR">OR – Odds Ratio</option>
-                <option value="RR">RR – Riesgo Relativo</option>
-                <option value="RD">RD – Diferencia de Riesgos</option>
-                <option value="MD">MD – Diferencia de Medias</option>
-                <option value="SMD">SMD – DM Estandarizada</option>
-              </select>
-            </div>
-            <div>
-              <label className="label">Modelo de combinación</label>
-              <select className="input" value={form.model_type} onChange={set('model_type')}>
-                <option value="random">Efectos aleatorios (DL)</option>
-                <option value="fixed">Efectos fijos (IV)</option>
-              </select>
-            </div>
-          </div>
-        </div>
-
-        {/* ── PICO ── */}
-        <div className="card p-6 space-y-4">
-          <h3 className="font-semibold text-gray-700 text-sm uppercase tracking-wide">PICO</h3>
-          {[
-            { field: 'population',    label: 'Población (P)',     placeholder: 'Ej: Adultos con diabetes tipo 2' },
-            { field: 'intervention',  label: 'Intervención (I)',  placeholder: 'Ej: Metformina en monoterapia' },
-            { field: 'comparison',    label: 'Comparación (C)',   placeholder: 'Ej: Placebo o sin tratamiento' },
-            { field: 'outcomes',      label: 'Desenlaces (O)',    placeholder: 'Ej: Reducción de HbA1c, eventos adversos' },
-          ].map(({ field, label, placeholder }) => (
-            <div key={field}>
-              <label className="label">{label}</label>
-              <textarea
-                className="input resize-none"
-                rows={2}
-                value={(form as any)[field]}
-                onChange={set(field)}
-                placeholder={placeholder}
+              <label className="label">Título *</label>
+              <input
+                className="input"
+                required
+                value={form.title}
+                onChange={set('title')}
+                placeholder="Ej: Efecto de X intervención sobre Y desenlace en Z población"
               />
             </div>
-          ))}
-        </div>
-
-        {/* ── Criterios de selección ── */}
-        <div className="card p-6 space-y-4 border-cochrane-200 border-2">
-          <div className="flex items-center gap-2">
-            <h3 className="font-semibold text-cochrane-700 text-sm uppercase tracking-wide">
-              Criterios de Selección de Estudios
-            </h3>
-            {hasCriteria && (
-              <span className="flex items-center gap-1 text-xs text-green-600 font-medium">
-                <CheckCircle2 size={13} /> Definidos
-              </span>
-            )}
-          </div>
-          <p className="text-xs text-gray-500">
-            La IA usará estos criterios para cribar automáticamente los estudios al ejecutar el Pipeline.
-          </p>
-
-          <div>
-            <label className="label text-green-700">Criterios de Inclusión</label>
-            <textarea
-              className="input resize-none border-green-200 focus:border-green-400 focus:ring-green-200"
-              rows={4}
-              value={form.inclusion_criteria}
-              onChange={set('inclusion_criteria')}
-              placeholder={
-                'Ej:\n• Estudios aleatorizados controlados (ECA)\n• Adultos ≥ 18 años con diagnóstico confirmado\n• Seguimiento ≥ 3 meses\n• Desenlace primario reportado (HbA1c o glucosa en ayunas)'
-              }
-            />
-          </div>
-
-          <div>
-            <label className="label text-red-700">Criterios de Exclusión</label>
-            <textarea
-              className="input resize-none border-red-200 focus:border-red-400 focus:ring-red-200"
-              rows={4}
-              value={form.exclusion_criteria}
-              onChange={set('exclusion_criteria')}
-              placeholder={
-                'Ej:\n• Estudios observacionales, series de casos o reportes de caso\n• Población pediátrica (< 18 años)\n• Datos insuficientes para el meta-análisis\n• Publicaciones duplicadas o datos no originales'
-              }
-            />
-          </div>
-
-          {hasCriteria && (
-            <div className="bg-cochrane-50 border border-cochrane-100 rounded-lg p-3 text-xs text-cochrane-700">
-              ✓ Criterios guardados. Al crear la revisión y agregar estudios, ejecuta el
-              <strong> Pipeline IA Completo</strong> desde el panel de Análisis Estadístico
-              para que la IA criba, extraiga y analice automáticamente.
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="label">ID PROSPERO</label>
+                <input className="input" value={form.prospero_id} onChange={set('prospero_id')} placeholder="CRD42024..." />
+              </div>
+              <div>
+                <label className="label">Diseño de estudios</label>
+                <input className="input" value={form.study_design} onChange={set('study_design')} placeholder="ECA, CCT..." />
+              </div>
             </div>
-          )}
-        </div>
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="label">Medida del efecto</label>
+                <select className="input" value={form.effect_measure} onChange={set('effect_measure')}>
+                  <option value="OR">OR – Odds Ratio</option>
+                  <option value="RR">RR – Riesgo Relativo</option>
+                  <option value="RD">RD – Diferencia de Riesgos</option>
+                  <option value="MD">MD – Diferencia de Medias</option>
+                  <option value="SMD">SMD – DM Estandarizada</option>
+                </select>
+              </div>
+              <div>
+                <label className="label">Modelo de combinación</label>
+                <select className="input" value={form.model_type} onChange={set('model_type')}>
+                  <option value="random">Efectos aleatorios (DL)</option>
+                  <option value="fixed">Efectos fijos (IV)</option>
+                </select>
+              </div>
+            </div>
+            <div className="flex justify-end pt-1">
+              <button type="button" onClick={() => setActiveTab('pico')} className="btn-primary text-sm">
+                Siguiente: PICO <ArrowRight size={14} />
+              </button>
+            </div>
+          </div>
+        )}
 
-        <div className="flex justify-end">
-          <button type="submit" className="btn-primary" disabled={mutation.isPending}>
-            {mutation.isPending ? 'Creando...' : 'Crear Revisión'}
-            <ArrowRight size={16} />
-          </button>
-        </div>
+        {/* ── Tab: PICO ── */}
+        {activeTab === 'pico' && (
+          <div className="card p-6 space-y-4">
+            {[
+              { field: 'population',   label: 'Población (P)',    placeholder: 'Ej: Adultos con diabetes tipo 2' },
+              { field: 'intervention', label: 'Intervención (I)', placeholder: 'Ej: Metformina en monoterapia' },
+              { field: 'comparison',   label: 'Comparación (C)',  placeholder: 'Ej: Placebo o sin tratamiento' },
+              { field: 'outcomes',     label: 'Desenlaces (O)',   placeholder: 'Ej: Reducción de HbA1c, eventos adversos' },
+            ].map(({ field, label, placeholder }) => (
+              <div key={field}>
+                <label className="label">{label}</label>
+                <textarea
+                  className="input resize-none"
+                  rows={2}
+                  value={(form as any)[field]}
+                  onChange={set(field)}
+                  placeholder={placeholder}
+                />
+              </div>
+            ))}
+            <div className="flex justify-between pt-1">
+              <button type="button" onClick={() => setActiveTab('general')} className="btn-secondary text-sm">
+                <ArrowLeft size={14} /> Atrás
+              </button>
+              <button type="button" onClick={() => setActiveTab('criteria')} className="btn-primary text-sm">
+                Siguiente: Criterios <ArrowRight size={14} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* ── Tab: Criterios de Inclusión / Exclusión ── */}
+        {activeTab === 'criteria' && (
+          <div className="card p-6 space-y-5">
+            <div className="bg-cochrane-50 border border-cochrane-100 rounded-lg p-3 text-xs text-cochrane-700">
+              La IA usa estos criterios en el <strong>Pipeline Completo</strong> para decidir automáticamente
+              qué estudios incluir o excluir al cribar tu biblioteca de referencias.
+            </div>
+
+            <div>
+              <label className="label text-green-700 font-semibold">Criterios de Inclusión</label>
+              <textarea
+                className="input resize-none border-green-300 focus:border-green-500 focus:ring-green-200"
+                rows={5}
+                value={form.inclusion_criteria}
+                onChange={set('inclusion_criteria')}
+                placeholder={
+                  'Ej:\n• Estudios aleatorizados controlados (ECA)\n• Adultos ≥ 18 años con diagnóstico confirmado\n• Seguimiento ≥ 3 meses\n• Desenlace primario reportado'
+                }
+              />
+            </div>
+
+            <div>
+              <label className="label text-red-700 font-semibold">Criterios de Exclusión</label>
+              <textarea
+                className="input resize-none border-red-300 focus:border-red-500 focus:ring-red-200"
+                rows={5}
+                value={form.exclusion_criteria}
+                onChange={set('exclusion_criteria')}
+                placeholder={
+                  'Ej:\n• Estudios observacionales o series de casos\n• Población pediátrica (< 18 años)\n• Datos insuficientes para el meta-análisis\n• Publicaciones duplicadas o datos no originales'
+                }
+              />
+            </div>
+
+            {hasCriteria && (
+              <div className="flex items-center gap-2 text-xs text-green-700 bg-green-50 border border-green-200 rounded-lg p-2.5">
+                <CheckCircle2 size={14} />
+                Criterios definidos — la IA los aplicará automáticamente al cribar estudios.
+              </div>
+            )}
+
+            <div className="flex justify-between pt-1">
+              <button type="button" onClick={() => setActiveTab('pico')} className="btn-secondary text-sm">
+                <ArrowLeft size={14} /> Atrás
+              </button>
+              <button
+                type="submit"
+                className="btn-primary"
+                disabled={mutation.isPending || !canSubmit}
+              >
+                {mutation.isPending ? 'Creando...' : 'Crear Revisión'}
+                <ArrowRight size={16} />
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Submit visible from any tab if title filled */}
+        {activeTab !== 'criteria' && canSubmit && (
+          <div className="flex justify-end">
+            <button
+              type="submit"
+              className="text-sm text-gray-400 hover:text-cochrane-600 underline"
+              disabled={mutation.isPending}
+            >
+              {mutation.isPending ? 'Creando...' : 'Crear revisión ahora (sin completar todos los campos)'}
+            </button>
+          </div>
+        )}
       </form>
     </div>
   )
