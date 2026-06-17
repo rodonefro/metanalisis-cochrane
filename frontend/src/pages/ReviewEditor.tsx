@@ -51,6 +51,8 @@ export default function ReviewEditor() {
         intervention: review.intervention, comparison: review.comparison,
         outcomes: review.outcomes, prospero_id: review.prospero_id,
         effect_measure: review.effect_measure, model_type: review.model_type,
+        inclusion_criteria: review.inclusion_criteria,
+        exclusion_criteria: review.exclusion_criteria,
       })
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -212,6 +214,30 @@ export default function ReviewEditor() {
               <option value="random">Efectos aleatorios</option>
               <option value="fixed">Efectos fijos</option>
             </select>
+          </div>
+        </div>
+
+        {/* Criterios de selección */}
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <div>
+            <label className="label text-green-700">Criterios de Inclusión</label>
+            <textarea
+              className="input text-sm resize-none border-green-200 focus:border-green-400"
+              rows={3}
+              value={(pico as any).inclusion_criteria || ''}
+              onChange={(e) => handlePicoChange('inclusion_criteria', e.target.value)}
+              placeholder="Ej: ECA, adultos ≥18 años, seguimiento ≥3 meses..."
+            />
+          </div>
+          <div>
+            <label className="label text-red-700">Criterios de Exclusión</label>
+            <textarea
+              className="input text-sm resize-none border-red-200 focus:border-red-400"
+              rows={3}
+              value={(pico as any).exclusion_criteria || ''}
+              onChange={(e) => handlePicoChange('exclusion_criteria', e.target.value)}
+              placeholder="Ej: Estudios observacionales, población pediátrica..."
+            />
           </div>
         </div>
       </div>

@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { BarChart2, ChevronDown, ChevronUp, Play, Wand2, Download, Filter, Table } from 'lucide-react'
+import { BarChart2, ChevronDown, ChevronUp, Play, Wand2, Download, Filter, Table, Zap, CheckCircle2, Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { runAnalysis, getLatestAnalysis, generateSection, getForestPlot, getFunnelPlot, getGradeTable } from '../services/api'
+import { runAnalysis, getLatestAnalysis, generateSection, getForestPlot, getFunnelPlot, getGradeTable, aiScreenStudies, aiExtractData } from '../services/api'
 import type { Analysis } from '../services/api'
 
 interface Props {
@@ -111,7 +111,10 @@ export default function AnalysisPanel({ reviewId }: Props) {
   const [loadingForest, setLoadingForest] = useState(false)
   const [loadingFunnel, setLoadingFunnel] = useState(false)
   const [loadingGrade, setLoadingGrade] = useState(false)
-  // Legacy manual interpretation (kept for full Cochrane-style combined text)
+  // Pipeline IA Completo
+  const [pipelineRunning, setPipelineRunning] = useState(false)
+  const [pipelineStep, setPipelineStep] = useState<string | null>(null)
+  // Legacy manual interpretation
   const [interpretation, setInterpretation] = useState<string>('')
   const [interpreting, setInterpreting] = useState(false)
   const qc = useQueryClient()
@@ -181,6 +184,54 @@ export default function AnalysisPanel({ reviewId }: Props) {
     }
   }
 
+  const PIPELINE_STEPS = [
+    { id: 'screening',  label: 'Cribado IA' },
+    { id: 'extraction', label: 'Extracción' },
+    { id: 'analysis',   label: 'Meta-análisis' },
+    { id: 'plots',      label: 'Gráficas' },
+  ]
+
+  const handleFullPipeline = async () => {
+    setPipelineRunning(true)
+    try {
+      setPipelineStep('screening')
+      toast.loading('Paso 1/4 — Cribado de estudios con IA...', { id: 'pipeline' })
+      await aiScreenStudies(reviewId)
+
+      setPipelineStep('extraction')
+      toast.loading('Paso 2/4 — Extracción de datos cuantitativos...', { id: 'pipeline' })
+      await aiExtractData(reviewId)
+
+      setPipelineStep('analysis')
+      toast.loading('Paso 3/4 — Ejecutando meta-análisis estadístico...', { id: 'pipeline' })
+      await runAnalysis(reviewId)
+      qc.invalidateQueries({ queryKey: ['analysis', reviewId] })
+
+      setPipelineStep('plots')
+      toast.loading('Paso 4/4 — Generando gráficas con interpretación IA...', { id: 'pipeline' })
+      setLoadingForest(true); setLoadingFunnel(true); setLoadingGrade(true)
+      const [forestRes, funnelRes, gradeRes] = await Promise.all([
+        getForestPlot(reviewId),
+        getFunnelPlot(reviewId),
+        getGradeTable(reviewId),
+      ])
+      setForestB64(forestRes.forest_b64)
+      if (forestRes.interpretation) setForestInterp(forestRes.interpretation)
+      setFunnelB64(funnelRes.funnel_b64)
+      if (funnelRes.interpretation) setFunnelInterp(funnelRes.interpretation)
+      setGradeB64(gradeRes.grade_b64)
+      if (gradeRes.interpretation) setGradeInterp(gradeRes.interpretation)
+
+      toast.success('¡Pipeline IA completo! Análisis y gráficas listos.', { id: 'pipeline', duration: 5000 })
+    } catch (e: any) {
+      toast.error(e.response?.data?.detail || 'Error en el pipeline IA', { id: 'pipeline' })
+    } finally {
+      setPipelineRunning(false)
+      setPipelineStep(null)
+      setLoadingForest(false); setLoadingFunnel(false); setLoadingGrade(false)
+    }
+  }
+
   const handleInterpret = async () => {
     setInterpreting(true)
     try {
@@ -220,18 +271,75 @@ export default function AnalysisPanel({ reviewId }: Props) {
 
       {open && (
         <div className="border-t border-gray-100 p-5 space-y-6">
-          {/* Step 1: Run analysis */}
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => runMutation.mutate()}
-              disabled={runMutation.isPending}
-              className="btn-primary"
-            >
-              <Play size={15} />
-              {runMutation.isPending ? 'Ejecutando análisis...' : 'Ejecutar Metaanálisis (Run Meta-Analysis)'}
-            </button>
-            <p className="text-xs text-gray-400">Paso 1: ejecuta el análisis estadístico para activar las gráficas</p>
+
+          {/* ── Pipeline IA Completo ── */}
+          <div className="rounded-xl border-2 border-cochrane-300 bg-gradient-to-r from-cochrane-50 to-blue-50 p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2 mb-1">
+                  <Zap size={16} className="text-cochrane-600" />
+                  <p className="text-sm font-bold text-cochrane-800">Pipeline IA Completo</p>
+                </div>
+                <p className="text-xs text-gray-600">
+                  Ejecuta en secuencia: <strong>Cribado IA</strong> (usa criterios de inclusión/exclusión)
+                  → <strong>Extracción de datos</strong> → <strong>Meta-análisis</strong> → <strong>3 gráficas con interpretación IA</strong>
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={handleFullPipeline}
+                disabled={pipelineRunning}
+                className="btn-primary shrink-0 text-sm"
+              >
+                {pipelineRunning
+                  ? <><Loader2 size={14} className="animate-spin" /> Ejecutando...</>
+                  : <><Zap size={14} /> Ejecutar Pipeline IA</>
+                }
+              </button>
+            </div>
+
+            {/* Step indicators */}
+            {pipelineRunning && (
+              <div className="mt-3 flex gap-2 flex-wrap">
+                {PIPELINE_STEPS.map((step, i) => {
+                  const currentIdx = PIPELINE_STEPS.findIndex(s => s.id === pipelineStep)
+                  const done = i < currentIdx
+                  const active = i === currentIdx
+                  return (
+                    <div
+                      key={step.id}
+                      className={`flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-full border font-medium
+                        ${done   ? 'bg-green-100 border-green-300 text-green-700'
+                        : active ? 'bg-cochrane-100 border-cochrane-400 text-cochrane-700'
+                                 : 'bg-white border-gray-200 text-gray-400'}`}
+                    >
+                      {done   ? <CheckCircle2 size={11} />
+                      : active ? <Loader2 size={11} className="animate-spin" />
+                               : <span className="w-2.5 h-2.5 rounded-full border border-gray-300 inline-block" />}
+                      {step.label}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* ── Ejecución manual paso a paso ── */}
+          <div>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-3">
+              O bien, paso a paso manual
+            </p>
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={() => runMutation.mutate()}
+                disabled={runMutation.isPending || pipelineRunning}
+                className="btn-primary"
+              >
+                <Play size={15} />
+                {runMutation.isPending ? 'Ejecutando análisis...' : 'Solo Meta-análisis estadístico'}
+              </button>
+            </div>
           </div>
 
           {/* Summary stats */}
@@ -266,10 +374,10 @@ export default function AnalysisPanel({ reviewId }: Props) {
             </div>
           )}
 
-          {/* Step 2: Individual plot buttons */}
+          {/* Individual plot buttons */}
           <div>
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">
-              Paso 2 — Generar gráficas individualmente
+              Gráficas individuales
             </p>
             <div className="grid grid-cols-1 gap-4">
               <PlotCard
@@ -278,7 +386,7 @@ export default function AnalysisPanel({ reviewId }: Props) {
                 icon={BarChart2}
                 iconColor="text-cochrane-500"
                 b64={forestB64}
-                loading={loadingForest}
+                loading={loadingForest || pipelineRunning}
                 interpretation={forestInterp}
                 onGenerate={handleForest}
               />
@@ -289,7 +397,7 @@ export default function AnalysisPanel({ reviewId }: Props) {
                 icon={Filter}
                 iconColor="text-blue-500"
                 b64={funnelB64}
-                loading={loadingFunnel}
+                loading={loadingFunnel || pipelineRunning}
                 interpretation={funnelInterp}
                 onGenerate={handleFunnel}
                 imgClass="w-full max-w-lg mx-auto block"
@@ -301,7 +409,7 @@ export default function AnalysisPanel({ reviewId }: Props) {
                 icon={Table}
                 iconColor="text-emerald-500"
                 b64={gradeB64}
-                loading={loadingGrade}
+                loading={loadingGrade || pipelineRunning}
                 interpretation={gradeInterp}
                 onGenerate={handleGrade}
               />
