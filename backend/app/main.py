@@ -55,6 +55,7 @@ def _migrate_db():
         ("prisma_exclusion_reasons", "TEXT"),
         ("prisma_included", "INTEGER"),
         ("prisma_reports_included", "INTEGER"),
+        ("subgroup_study_types", "TEXT"),
     ]
 
     inspector = sa_inspect(engine)

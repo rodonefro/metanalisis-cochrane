@@ -110,6 +110,7 @@ class ReviewBase(BaseModel):
     inclusion_criteria: Optional[str] = None
     exclusion_criteria: Optional[str] = None
     types_of_studies: Optional[str] = None
+    subgroup_study_types: Optional[str] = None
     types_of_participants: Optional[str] = None
     types_of_interventions: Optional[str] = None
     types_of_outcomes: Optional[str] = None

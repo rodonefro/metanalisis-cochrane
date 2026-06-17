@@ -67,6 +67,7 @@ export default function ReviewEditor() {
         inclusion_criteria: review.inclusion_criteria,
         exclusion_criteria: review.exclusion_criteria,
         types_of_studies: review.types_of_studies,
+        subgroup_study_types: review.subgroup_study_types,
       })
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -97,6 +98,13 @@ export default function ReviewEditor() {
     const current = pico.types_of_studies ? pico.types_of_studies.split(', ').filter(Boolean) : []
     const next = current.includes(type) ? current.filter((t) => t !== type) : [...current, type]
     handlePicoChange('types_of_studies', next.join(', '))
+  }
+
+  const selectedSubgroupTypes = pico.subgroup_study_types ? pico.subgroup_study_types.split(', ').filter(Boolean) : []
+  const toggleSubgroupStudyType = (type: string) => {
+    const current = pico.subgroup_study_types ? pico.subgroup_study_types.split(', ').filter(Boolean) : []
+    const next = current.includes(type) ? current.filter((t) => t !== type) : [...current, type]
+    handlePicoChange('subgroup_study_types', next.join(', '))
   }
 
   const handleSaveSection = (field: keyof Review) => (text: string) => {
@@ -284,6 +292,35 @@ export default function ReviewEditor() {
               onChange={(e) => handlePicoChange('exclusion_criteria', e.target.value)}
               placeholder="Ej: Estudios observacionales, población pediátrica..."
             />
+          </div>
+        </div>
+
+        {/* Tipos de estudio a incluir para un sub-análisis */}
+        <div className="mt-3 pt-3 border-t border-gray-100">
+          <label className="label">Tipos de estudio a incluir para un sub-análisis</label>
+          <p className="text-xs text-gray-400 mb-2">
+            Opcional. Diseños que se podrán aislar en un análisis de subgrupos o sensibilidad,
+            independiente de los tipos de estudio principales de la revisión.
+          </p>
+          <div className="grid grid-cols-2 gap-2">
+            {STUDY_TYPES.map((type) => {
+              const checked = selectedSubgroupTypes.includes(type)
+              return (
+                <label
+                  key={type}
+                  className={`flex items-start gap-2 text-xs rounded-lg border p-2 cursor-pointer transition-colors
+                    ${checked ? 'border-cochrane-400 bg-cochrane-50 text-cochrane-800' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                >
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={checked}
+                    onChange={() => toggleSubgroupStudyType(type)}
+                  />
+                  {type}
+                </label>
+              )
+            })}
           </div>
         </div>
       </div>

@@ -33,6 +33,7 @@ class Review(Base):
     inclusion_criteria = Column(Text, nullable=True)
     exclusion_criteria = Column(Text, nullable=True)
     types_of_studies = Column(Text, nullable=True)
+    subgroup_study_types = Column(Text, nullable=True)
     types_of_participants = Column(Text, nullable=True)
     types_of_interventions = Column(Text, nullable=True)
     types_of_outcomes = Column(Text, nullable=True)

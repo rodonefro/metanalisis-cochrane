@@ -33,6 +33,7 @@ export interface Review extends ReviewSummary {
   inclusion_criteria: string | null
   exclusion_criteria: string | null
   types_of_studies: string | null
+  subgroup_study_types: string | null
   types_of_participants: string | null
   types_of_interventions: string | null
   types_of_outcomes: string | null

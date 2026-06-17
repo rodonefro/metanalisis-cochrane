@@ -40,6 +40,7 @@ export default function NewReview() {
     types_of_studies: '',
     inclusion_criteria: '',
     exclusion_criteria: '',
+    subgroup_study_types: '',
   })
 
   const mutation = useMutation({
@@ -61,6 +62,15 @@ export default function NewReview() {
       const current = f.types_of_studies ? f.types_of_studies.split(', ').filter(Boolean) : []
       const next = current.includes(type) ? current.filter((t) => t !== type) : [...current, type]
       return { ...f, types_of_studies: next.join(', ') }
+    })
+  }
+
+  const selectedSubgroupTypes = form.subgroup_study_types ? form.subgroup_study_types.split(', ').filter(Boolean) : []
+  const toggleSubgroupStudyType = (type: string) => {
+    setForm((f) => {
+      const current = f.subgroup_study_types ? f.subgroup_study_types.split(', ').filter(Boolean) : []
+      const next = current.includes(type) ? current.filter((t) => t !== type) : [...current, type]
+      return { ...f, subgroup_study_types: next.join(', ') }
     })
   }
 
@@ -264,6 +274,34 @@ export default function NewReview() {
                 Criterios definidos — la IA los aplicará automáticamente al cribar estudios.
               </div>
             )}
+
+            <div className="pt-2 border-t border-gray-100">
+              <label className="label">Tipos de estudio a incluir para un sub-análisis</label>
+              <p className="text-xs text-gray-400 mb-2">
+                Opcional. Define qué diseños se podrán aislar en un análisis de subgrupos o sensibilidad,
+                independiente de los tipos de estudio principales de la revisión.
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                {STUDY_TYPES.map((type) => {
+                  const checked = selectedSubgroupTypes.includes(type)
+                  return (
+                    <label
+                      key={type}
+                      className={`flex items-start gap-2 text-xs rounded-lg border p-2 cursor-pointer transition-colors
+                        ${checked ? 'border-cochrane-400 bg-cochrane-50 text-cochrane-800' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={checked}
+                        onChange={() => toggleSubgroupStudyType(type)}
+                      />
+                      {type}
+                    </label>
+                  )
+                })}
+              </div>
+            </div>
 
             <div className="flex justify-between pt-1">
               <button type="button" onClick={() => setActiveTab('pico')} className="btn-secondary text-sm">
