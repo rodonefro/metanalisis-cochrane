@@ -28,6 +28,19 @@ const SECTION_FIELD: Record<string, keyof Review> = {
   discussion: 'discussion',
 }
 
+const STUDY_TYPES = [
+  'Ensayo clínico controlado aleatorizado (ECA/RCT)',
+  'Ensayo clínico controlado no aleatorizado',
+  'Estudio cuasi-experimental',
+  'Estudio de cohorte prospectivo',
+  'Estudio de cohorte retrospectivo',
+  'Estudio de casos y controles',
+  'Estudio transversal (corte transversal)',
+  'Serie de casos',
+  'Revisión sistemática / Meta-análisis',
+  'Estudio cualitativo',
+]
+
 export default function ReviewEditor() {
   const { id } = useParams<{ id: string }>()
   const reviewId = Number(id)
@@ -53,6 +66,7 @@ export default function ReviewEditor() {
         effect_measure: review.effect_measure, model_type: review.model_type,
         inclusion_criteria: review.inclusion_criteria,
         exclusion_criteria: review.exclusion_criteria,
+        types_of_studies: review.types_of_studies,
       })
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -76,6 +90,13 @@ export default function ReviewEditor() {
     autoSaveTimer.current = setTimeout(() => {
       updateMutation.mutate({ ...pico, [field]: value } as Partial<Review>)
     }, 2000)
+  }
+
+  const selectedTypes = pico.types_of_studies ? pico.types_of_studies.split(', ').filter(Boolean) : []
+  const toggleStudyType = (type: string) => {
+    const current = pico.types_of_studies ? pico.types_of_studies.split(', ').filter(Boolean) : []
+    const next = current.includes(type) ? current.filter((t) => t !== type) : [...current, type]
+    handlePicoChange('types_of_studies', next.join(', '))
   }
 
   const handleSaveSection = (field: keyof Review) => (text: string) => {
@@ -214,6 +235,31 @@ export default function ReviewEditor() {
               <option value="random">Efectos aleatorios</option>
               <option value="fixed">Efectos fijos</option>
             </select>
+          </div>
+        </div>
+
+        {/* Tipos de estudio a incluir */}
+        <div className="mt-3">
+          <label className="label">Tipos de estudio a incluir</label>
+          <div className="grid grid-cols-2 gap-2">
+            {STUDY_TYPES.map((type) => {
+              const checked = selectedTypes.includes(type)
+              return (
+                <label
+                  key={type}
+                  className={`flex items-start gap-2 text-xs rounded-lg border p-2 cursor-pointer transition-colors
+                    ${checked ? 'border-cochrane-400 bg-cochrane-50 text-cochrane-800' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                >
+                  <input
+                    type="checkbox"
+                    className="mt-0.5"
+                    checked={checked}
+                    onChange={() => toggleStudyType(type)}
+                  />
+                  {type}
+                </label>
+              )
+            })}
           </div>
         </div>
 

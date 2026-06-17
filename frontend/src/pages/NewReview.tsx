@@ -11,6 +11,19 @@ const TABS = [
   { id: 'criteria',  label: 'Criterios de Inclusión / Exclusión', icon: Filter },
 ]
 
+const STUDY_TYPES = [
+  'Ensayo clínico controlado aleatorizado (ECA/RCT)',
+  'Ensayo clínico controlado no aleatorizado',
+  'Estudio cuasi-experimental',
+  'Estudio de cohorte prospectivo',
+  'Estudio de cohorte retrospectivo',
+  'Estudio de casos y controles',
+  'Estudio transversal (corte transversal)',
+  'Serie de casos',
+  'Revisión sistemática / Meta-análisis',
+  'Estudio cualitativo',
+]
+
 export default function NewReview() {
   const navigate = useNavigate()
   const [activeTab, setActiveTab] = useState('general')
@@ -24,6 +37,7 @@ export default function NewReview() {
     comparison: '',
     outcomes: '',
     study_design: '',
+    types_of_studies: '',
     inclusion_criteria: '',
     exclusion_criteria: '',
   })
@@ -40,6 +54,15 @@ export default function NewReview() {
   const set = (field: string) => (
     e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>
   ) => setForm((f) => ({ ...f, [field]: e.target.value }))
+
+  const selectedTypes = form.types_of_studies ? form.types_of_studies.split(', ').filter(Boolean) : []
+  const toggleStudyType = (type: string) => {
+    setForm((f) => {
+      const current = f.types_of_studies ? f.types_of_studies.split(', ').filter(Boolean) : []
+      const next = current.includes(type) ? current.filter((t) => t !== type) : [...current, type]
+      return { ...f, types_of_studies: next.join(', ') }
+    })
+  }
 
   const hasCriteria = form.inclusion_criteria.trim() || form.exclusion_criteria.trim()
   const canSubmit = form.title.trim().length > 0
@@ -180,6 +203,33 @@ export default function NewReview() {
             <div className="bg-cochrane-50 border border-cochrane-100 rounded-lg p-3 text-xs text-cochrane-700">
               La IA usa estos criterios en el <strong>Pipeline Completo</strong> para decidir automáticamente
               qué estudios incluir o excluir al cribar tu biblioteca de referencias.
+            </div>
+
+            <div>
+              <label className="label">Tipos de estudio a incluir</label>
+              <p className="text-xs text-gray-400 mb-2">
+                Selecciona todos los diseños que la IA debe aceptar. Si no marcas ninguno, se aceptará cualquier diseño relevante a tu PICO.
+              </p>
+              <div className="grid grid-cols-2 gap-2">
+                {STUDY_TYPES.map((type) => {
+                  const checked = selectedTypes.includes(type)
+                  return (
+                    <label
+                      key={type}
+                      className={`flex items-start gap-2 text-xs rounded-lg border p-2 cursor-pointer transition-colors
+                        ${checked ? 'border-cochrane-400 bg-cochrane-50 text-cochrane-800' : 'border-gray-200 text-gray-600 hover:border-gray-300'}`}
+                    >
+                      <input
+                        type="checkbox"
+                        className="mt-0.5"
+                        checked={checked}
+                        onChange={() => toggleStudyType(type)}
+                      />
+                      {type}
+                    </label>
+                  )
+                })}
+              </div>
             </div>
 
             <div>

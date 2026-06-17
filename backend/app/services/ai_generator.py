@@ -365,6 +365,27 @@ def screen_studies_with_ai(review: dict, studies: list[dict]) -> dict:
         f"Desenlaces: {review.get('outcomes', '')}"
     )
     title = review.get("title", "Revisión sistemática")
+    types_of_studies = (review.get("types_of_studies") or "").strip()
+    inclusion_criteria = (review.get("inclusion_criteria") or "").strip()
+    exclusion_criteria = (review.get("exclusion_criteria") or "").strip()
+
+    criteria_block = ""
+    if types_of_studies:
+        criteria_block += f"\nTIPOS DE ESTUDIO A INCLUIR (definidos por el autor de la revisión):\n{types_of_studies}\n"
+    if inclusion_criteria:
+        criteria_block += f"\nCRITERIOS DE INCLUSIÓN:\n{inclusion_criteria}\n"
+    if exclusion_criteria:
+        criteria_block += f"\nCRITERIOS DE EXCLUSIÓN:\n{exclusion_criteria}\n"
+
+    study_type_instruction = (
+        "- Tipo de estudio: usa EXCLUSIVAMENTE los tipos de estudio definidos por el autor "
+        "(ver 'TIPOS DE ESTUDIO A INCLUIR' y 'CRITERIOS DE INCLUSIÓN' arriba). "
+        "Si el autor incluyó estudios observacionales (cohorte, casos y controles, transversales, etc.), "
+        "inclúyelos también — NO los rechaces solo por no ser ensayos aleatorizados (RCT). "
+        "Si no se especificó ningún tipo de estudio, acepta cualquier diseño relevante a la pregunta PICO."
+        if (types_of_studies or inclusion_criteria) else
+        "- Tipo de estudio: acepta cualquier diseño relevante a la pregunta PICO (no se especificaron restricciones)."
+    )
 
     results: dict = {}
     batch_size = 30
@@ -389,13 +410,14 @@ def screen_studies_with_ai(review: dict, studies: list[dict]) -> dict:
         studies_json = "[\n" + ",\n".join(lines) + "\n]"
 
         user = (
-            f"REVISIÓN SISTEMÁTICA: {title}\n\nCRITERIOS PICO:\n{pico}\n\n"
-            "Evalúa cada estudio para determinar si debe incluirse en el metaanálisis "
-            "según los criterios PICO anteriores. Considera:\n"
-            "- Tipo de estudio (RCT o estudio controlado preferido)\n"
+            f"REVISIÓN SISTEMÁTICA: {title}\n\nCRITERIOS PICO:\n{pico}\n"
+            f"{criteria_block}\n"
+            "Evalúa cada estudio para determinar si debe incluirse en el metaanálisis. Considera:\n"
+            f"{study_type_instruction}\n"
             "- Población correcta según los criterios\n"
             "- Intervención y comparación relevantes\n"
-            "- Desenlaces reportados\n\n"
+            "- Desenlaces reportados\n"
+            "- Respeta los criterios de exclusión definidos por el autor, si los hay\n\n"
             f"ESTUDIOS A CRIBAR:\n{studies_json}\n\n"
             "Responde ÚNICAMENTE con JSON válido:\n"
             '{"decisions": [{"id": N, "included": true/false, "reason": "razón breve en español si excluido, null si incluido"}]}'
