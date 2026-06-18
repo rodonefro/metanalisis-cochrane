@@ -215,6 +215,8 @@ export default function AnalysisPanel({ reviewId }: Props) {
       toast.loading('Paso 4/5 — Ejecutando meta-análisis estadístico...', { id: 'pipeline' })
       await runAnalysis(reviewId)
       qc.invalidateQueries({ queryKey: ['analysis', reviewId] })
+      // run_analysis also syncs prisma_reports_included to the real k it computed
+      qc.invalidateQueries({ queryKey: ['review', reviewId] })
 
       setPipelineStep('plots')
       toast.loading('Paso 5/5 — Generando gráficas con interpretación IA...', { id: 'pipeline' })

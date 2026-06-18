@@ -90,14 +90,16 @@ const FIELDS: { key: PrismaKey; label: string; placeholder: string; type: 'text'
   {
     key: 'prisma_included',
     label: 'Estudios incluidos (Studies included)',
-    placeholder: '12',
+    placeholder: '14',
     type: 'number',
+    hint: 'Total de estudios marcados como incluidos (✓) en la tabla de Estudios',
   },
   {
     key: 'prisma_reports_included',
-    label: 'Reportes de estudios incluidos (Reports included)',
-    placeholder: '14',
+    label: 'Reportes incluidos en el meta-análisis (Reports included)',
+    placeholder: '6',
     type: 'number',
+    hint: 'Cuántos de los incluidos tienen datos suficientes para entrar al meta-análisis (k). Se actualiza automáticamente al correr el análisis estadístico — puede ser menor que "Estudios incluidos" si a algunos les faltan datos.',
   },
 ]
 

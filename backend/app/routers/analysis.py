@@ -64,6 +64,15 @@ def run_analysis(review_id: int, db: Session = Depends(get_db)):
         rob_plot_b64=None,
     )
     db.add(analysis)
+
+    # "Studies included in review" (prisma_included) counts every study marked
+    # included=True; "Reports of included studies" must instead reflect how many
+    # of those actually made it into the pooled estimate (k) — a study can be
+    # included in the qualitative review but dropped from the meta-analysis for
+    # lacking quantitative data. Keeping these in sync is what makes the PRISMA
+    # diagram match the number the Pipeline IA actually analyzed.
+    review.prisma_reports_included = result.k
+
     db.commit()
     db.refresh(analysis)
     return analysis
@@ -232,6 +241,23 @@ def autofill_prisma(review_id: int, db: Session = Depends(get_db)):
         Study.included == True,  # noqa: E712
     ).count()
 
+    # "Reports of included studies" should reflect how many included studies
+    # actually have enough quantitative data to enter the pooled estimate (k),
+    # not just how many are marked included=True. Use the latest analysis k
+    # if one exists; otherwise fall back to included_count (no analysis run yet).
+    latest_analysis = (
+        db.query(Analysis)
+        .filter(Analysis.review_id == review_id)
+        .order_by(Analysis.created_at.desc())
+        .first()
+    )
+    reports_included = included_count
+    if latest_analysis:
+        try:
+            reports_included = json.loads(latest_analysis.results_json).get("k", included_count)
+        except Exception:
+            pass
+
     review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
 
     try:
@@ -244,7 +270,7 @@ def autofill_prisma(review_id: int, db: Session = Depends(get_db)):
     if assessed < included_count:
         assessed = total_count
     data["prisma_included"] = included_count
-    data["prisma_reports_included"] = included_count
+    data["prisma_reports_included"] = reports_included
     data["prisma_assessed"] = assessed
     data["prisma_excluded_eligibility"] = max(0, assessed - included_count)
 
