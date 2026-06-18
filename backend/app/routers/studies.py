@@ -192,8 +192,13 @@ def update_study(
     study = db.query(Study).filter(Study.id == study_id, Study.review_id == review_id).first()
     if not study:
         raise HTTPException(status_code=404, detail="Study not found")
-    for field, value in payload.model_dump(exclude_unset=True).items():
+    payload_data = payload.model_dump(exclude_unset=True)
+    for field, value in payload_data.items():
         setattr(study, field, value)
+    # A manual edit to the inclusion decision counts as a reviewed decision,
+    # so the AI screener won't overwrite it on a later run.
+    if "included" in payload_data:
+        study.screening_reviewed = True
     db.commit()
     db.refresh(study)
     return study

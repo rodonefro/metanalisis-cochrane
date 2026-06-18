@@ -182,6 +182,12 @@ class Study(Base):
     exclusion_reason = Column(Text, nullable=True)
     notes = Column(Text, nullable=True)
 
+    # True once a human (manual checkbox) or the AI screener has made an explicit
+    # inclusion/exclusion decision for this study. The AI re-screening pass skips
+    # any study where this is already True, so it never overwrites a decision
+    # that was already made.
+    screening_reviewed = Column(Boolean, default=False)
+
     review = relationship("Review", back_populates="studies")
 
 

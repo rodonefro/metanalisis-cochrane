@@ -374,6 +374,25 @@ export default function AnalysisPanel({ reviewId }: Props) {
             </div>
           )}
 
+          {/* Studies included but dropped from the pooled estimate for lack of data */}
+          {results?.excluded_studies?.length > 0 && (
+            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
+              <p className="text-xs font-semibold text-amber-700 mb-1.5 uppercase tracking-wide">
+                ⚠ {results.excluded_studies.length} estudio(s) incluido(s) no entraron en el meta-análisis
+              </p>
+              <p className="text-xs text-amber-700 mb-2">
+                Están marcados como incluidos (✓) pero les faltan datos cuantitativos para calcular el
+                tamaño de efecto, así que no se contaron en k={results.k}. Complétalos manualmente o con
+                "Extraer datos con IA" y vuelve a correr el meta-análisis.
+              </p>
+              <ul className="text-xs text-amber-800 space-y-0.5 list-disc list-inside">
+                {results.excluded_studies.map((e: { label: string; reason: string }, i: number) => (
+                  <li key={i}><strong>{e.label}</strong> — {e.reason}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
           {/* Individual plot buttons */}
           <div>
             <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-3">

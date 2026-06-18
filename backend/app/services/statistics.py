@@ -44,6 +44,10 @@ class MetaResult:
     # Prediction interval (random effects)
     pi_lower: Optional[float] = None
     pi_upper: Optional[float] = None
+    # Studies that were marked included but had to be dropped from the pooled
+    # estimate because they're missing the quantitative data this effect
+    # measure needs (e.g. total_control is null). [(label, reason), ...]
+    excluded_studies: List[tuple] = field(default_factory=list)
 
 
 # ── Effect size calculators ────────────────────────────────────────────────────
@@ -137,10 +141,11 @@ def run_meta_analysis(study_data: list, effect_measure: str,
     model: "fixed" | "random"
     """
     study_effects: List[StudyEffect] = []
+    excluded_studies: List[tuple] = []
     total_n = 0
 
     for s in study_data:
-        label = s.get("study_label", f"{s.get('authors','?')} {s.get('year','')}")
+        label = s.get("study_label") or f"{s.get('authors','?')} {s.get('year','')}"
         try:
             if effect_measure in ("OR", "RR", "RD"):
                 a = int(s.get("events_intervention") or 0)
@@ -148,6 +153,7 @@ def run_meta_analysis(study_data: list, effect_measure: str,
                 c = int(s.get("events_control") or 0)
                 n2 = int(s.get("total_control") or 0)
                 if n1 == 0 or n2 == 0:
+                    excluded_studies.append((label, "Faltan datos de eventos/total por grupo (intervención y/o control)"))
                     continue
                 total_n += n1 + n2
                 if effect_measure == "OR":
@@ -163,6 +169,7 @@ def run_meta_analysis(study_data: list, effect_measure: str,
                 n1 = s.get("n_intervention"); m2 = s.get("mean_control")
                 sd2 = s.get("sd_control"); n2 = s.get("n_control")
                 if any(v is None for v in [m1, sd1, n1, m2, sd2, n2]):
+                    excluded_studies.append((label, "Faltan datos de media/DE/n por grupo (intervención y/o control)"))
                     continue
                 n1, n2 = int(n1), int(n2)
                 total_n += n1 + n2
@@ -183,6 +190,7 @@ def run_meta_analysis(study_data: list, effect_measure: str,
                 continue
 
             if var <= 0 or math.isnan(eff) or math.isinf(eff):
+                excluded_studies.append((label, "El tamaño de efecto calculado no es válido (varianza nula o no numérica)"))
                 continue
 
             study_effects.append(StudyEffect(
@@ -193,6 +201,7 @@ def run_meta_analysis(study_data: list, effect_measure: str,
             ))
 
         except (TypeError, ValueError, ZeroDivisionError):
+            excluded_studies.append((label, "Datos numéricos inválidos o incompletos para calcular el tamaño de efecto"))
             continue
 
     k = len(study_effects)
@@ -257,6 +266,7 @@ def run_meta_analysis(study_data: list, effect_measure: str,
         total_n=total_n,
         pi_lower=pi_lower,
         pi_upper=pi_upper,
+        excluded_studies=excluded_studies,
     )
 
 
@@ -322,6 +332,9 @@ def meta_result_from_dict(d: dict) -> MetaResult:
         total_n=int(d.get("total_n", 0)),
         pi_lower=_inv(pi["lower"]) if pi.get("lower") is not None else None,
         pi_upper=_inv(pi["upper"]) if pi.get("upper") is not None else None,
+        excluded_studies=[
+            (e["label"], e["reason"]) for e in d.get("excluded_studies", [])
+        ],
     )
 
 
@@ -366,4 +379,7 @@ def result_to_dict(result: MetaResult) -> dict:
             "lower": bt(result.pi_lower) if result.pi_lower is not None else None,
             "upper": bt(result.pi_upper) if result.pi_upper is not None else None,
         },
+        "excluded_studies": [
+            {"label": label, "reason": reason} for label, reason in result.excluded_studies
+        ],
     }

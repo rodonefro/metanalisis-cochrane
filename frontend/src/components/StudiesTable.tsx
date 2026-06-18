@@ -1,5 +1,5 @@
 import { useState, useRef } from 'react'
-import { Upload, Plus, Trash2, ChevronDown, ChevronUp, Database, Download, Merge, Wand2, CheckCircle2, XCircle } from 'lucide-react'
+import { Upload, Plus, Trash2, ChevronDown, ChevronUp, Database, Download, Merge, Wand2, CheckCircle2, XCircle, Lock } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
@@ -213,12 +213,17 @@ export default function StudiesTable({ reviewId, studies }: Props) {
               <button
                 type="button"
                 onClick={() => {
-                  if (confirm(`¿Cribar ${studies.length} estudios con IA según los criterios PICO? Esto puede tardar 1-2 minutos.`))
+                  const pending = studies.filter(s => !s.screening_reviewed).length
+                  if (confirm(
+                    pending > 0
+                      ? `¿Cribar ${pending} estudio(s) pendiente(s) con IA según los criterios PICO? Los estudios que ya tienen una decisión (marcados manualmente o cribados antes) no se tocarán. Esto puede tardar 1-2 minutos.`
+                      : `Todos los estudios ya tienen una decisión de inclusión/exclusión. ¿Continuar de todas formas?`
+                  ))
                     screenMutation.mutate()
                 }}
                 disabled={screenMutation.isPending || extractMutation.isPending}
                 className="btn-primary text-xs"
-                title="La IA analiza título, resumen y diseño de cada estudio y decide inclusión/exclusión según el PICO"
+                title="La IA analiza título, resumen y diseño de cada estudio pendiente y decide inclusión/exclusión según el PICO. No modifica estudios que ya tienen una decisión."
               >
                 <Wand2 size={14} className={screenMutation.isPending ? 'animate-spin' : ''} />
                 {screenMutation.isPending ? 'Cribando con IA...' : 'Cribar con IA'}
@@ -254,16 +259,21 @@ export default function StudiesTable({ reviewId, studies }: Props) {
                     return (
                     <tr key={s.id} className={`hover:bg-gray-50 ${!isIncluded ? 'opacity-50 bg-red-50' : ''}`}>
                       <td className="px-3 py-2">
-                        <button
-                          type="button"
-                          title={isIncluded ? 'Incluido — clic para excluir' : `Excluido: ${s.exclusion_reason || ''} — clic para incluir`}
-                          onClick={() => toggleMutation.mutate({ id: s.id, included: !isIncluded })}
-                          className="transition-colors"
-                        >
-                          {isIncluded
-                            ? <CheckCircle2 size={16} className="text-green-500" />
-                            : <XCircle size={16} className="text-red-400" />}
-                        </button>
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            title={isIncluded ? 'Incluido — clic para excluir' : `Excluido: ${s.exclusion_reason || ''} — clic para incluir`}
+                            onClick={() => toggleMutation.mutate({ id: s.id, included: !isIncluded })}
+                            className="transition-colors"
+                          >
+                            {isIncluded
+                              ? <CheckCircle2 size={16} className="text-green-500" />
+                              : <XCircle size={16} className="text-red-400" />}
+                          </button>
+                          {s.screening_reviewed && (
+                            <Lock size={10} className="text-gray-300" title="Decisión final — el cribado IA no la modificará" />
+                          )}
+                        </div>
                       </td>
                       <td className="px-3 py-2 max-w-[160px]">
                         <p className="font-medium truncate">{s.study_label || s.authors || '—'}</p>

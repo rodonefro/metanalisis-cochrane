@@ -72,6 +72,7 @@ class StudyBase(BaseModel):
     included: Optional[bool] = True
     exclusion_reason: Optional[str] = None
     notes: Optional[str] = None
+    screening_reviewed: Optional[bool] = False
 
 
 class StudyCreate(StudyBase):

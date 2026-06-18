@@ -263,7 +263,13 @@ def autofill_prisma(review_id: int, db: Session = Depends(get_db)):
 
 @router.post("/ai-screen")
 def ai_screen_studies(review_id: int, db: Session = Depends(get_db)):
-    """Use AI to screen all studies against PICO criteria and set included/exclusion_reason."""
+    """Use AI to screen pending studies against PICO criteria and set included/exclusion_reason.
+
+    Studies that already have an inclusion decision (manually toggled by the user,
+    or screened by a previous AI run) are skipped, so this never overwrites a
+    selection that was already made — e.g. the final set of studies you curated
+    to match the PRISMA flow diagram.
+    """
     review = db.query(Review).filter(Review.id == review_id).first()
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")
@@ -272,10 +278,24 @@ def ai_screen_studies(review_id: int, db: Session = Depends(get_db)):
     if not all_studies:
         raise HTTPException(status_code=422, detail="No hay estudios para cribar.")
 
+    pending_studies = [s for s in all_studies if not s.screening_reviewed]
+    already_reviewed = len(all_studies) - len(pending_studies)
+
+    if not pending_studies:
+        return {
+            "message": (
+                f"No hay estudios pendientes de cribar: los {already_reviewed} estudios "
+                "ya tienen una decisión de inclusión/exclusión (manual o de un cribado IA previo)."
+            ),
+            "included": 0,
+            "excluded": 0,
+            "skipped_already_reviewed": already_reviewed,
+        }
+
     review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
     studies_list = [
         {c.name: getattr(s, c.name) for c in s.__table__.columns}
-        for s in all_studies
+        for s in pending_studies
     ]
 
     try:
@@ -285,12 +305,13 @@ def ai_screen_studies(review_id: int, db: Session = Depends(get_db)):
 
     included_count = 0
     excluded_count = 0
-    for study in all_studies:
+    for study in pending_studies:
         decision = decisions.get(study.id)
         if decision is None:
             continue
         study.included = decision["included"]
         study.exclusion_reason = decision.get("reason") if not decision["included"] else None
+        study.screening_reviewed = True
         if decision["included"]:
             included_count += 1
         else:
@@ -298,9 +319,13 @@ def ai_screen_studies(review_id: int, db: Session = Depends(get_db)):
 
     db.commit()
     return {
-        "message": f"Cribado completado: {included_count} incluidos, {excluded_count} excluidos",
+        "message": (
+            f"Cribado completado: {included_count} incluidos, {excluded_count} excluidos "
+            f"({already_reviewed} ya tenían decisión previa y no se modificaron)"
+        ),
         "included": included_count,
         "excluded": excluded_count,
+        "skipped_already_reviewed": already_reviewed,
     }
 
 

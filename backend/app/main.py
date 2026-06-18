@@ -40,6 +40,7 @@ def _migrate_db():
         ("key_findings", "TEXT"),
         ("reasoning_study_design", "TEXT"),
         ("source_database", "VARCHAR(200)"),
+        ("screening_reviewed", "BOOLEAN DEFAULT FALSE"),
     ]
     new_review_cols = [
         ("prisma_db_names", "TEXT"),
@@ -67,6 +68,8 @@ def _migrate_db():
     existing_study = {col["name"] for col in inspector.get_columns("studies")}
     existing_review = {col["name"] for col in inspector.get_columns("reviews")}
 
+    adding_screening_reviewed = "screening_reviewed" not in existing_study
+
     with engine.connect() as conn:
         for col, typ in new_study_cols:
             if col not in existing_study:
@@ -74,6 +77,12 @@ def _migrate_db():
         for col, typ in new_review_cols:
             if col not in existing_review:
                 conn.execute(sa.text(f"ALTER TABLE reviews ADD COLUMN {col} {typ}"))
+        if adding_screening_reviewed:
+            # Studies that already existed before this column was introduced were
+            # already curated by hand (or by an earlier AI screen run). Mark them
+            # as already-reviewed so a future AI screen doesn't re-evaluate and
+            # potentially overwrite a selection that's already final.
+            conn.execute(sa.text("UPDATE studies SET screening_reviewed = TRUE"))
         conn.commit()
 
 
