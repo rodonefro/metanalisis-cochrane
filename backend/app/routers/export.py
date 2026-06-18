@@ -44,6 +44,23 @@ def _para(text, style) -> Paragraph:
     return Paragraph(_safe(text), style)
 
 
+def _trunc(text, max_chars: int) -> str:
+    """Hard-cap free-text fields before they go into a fixed-width table cell.
+
+    A single Table row that can't fit on one page raises an unrecoverable
+    reportlab.LayoutError (no page is tall enough to hold it, so it can't even
+    be split across pages). Any field imported from Excel/CSV or written by the
+    AI extraction step is free text with no length guarantee, so every value
+    placed in a narrow table column must be capped here — not just the ones
+    that happened to be sliced when this table was first written.
+    """
+    s = str(text or "").strip()
+    if not s:
+        return "—"
+    s = " ".join(s.split())  # collapse newlines/extra whitespace so length reflects rendered width
+    return s if len(s) <= max_chars else s[: max_chars - 1].rstrip() + "…"
+
+
 def _b64_to_image(b64: str, width_cm: float = 14) -> Image | None:
     try:
         data = base64.b64decode(b64)
@@ -144,18 +161,19 @@ def _study_table(studies: list, st: dict):
     for s in studies:
         label = s.study_label or f"{s.authors or '?'} {s.year or ''}"
         n = (s.total_intervention or 0) + (s.total_control or 0) or (s.sample_size or "—")
-        interv = (s.patient_population or s.inclusion_criteria or "—")[:60]
-        ctrl   = (s.group_comparison or "—")[:50]
-        outc   = (s.survival_outcomes or s.key_findings or "—")[:60]
-        rob_val = s.rob_overall or "—"
-        rob_color = {"low": "#2ecc71", "some_concerns": "#f39c12", "high": "#e74c3c"}.get(rob_val, "#aaaaaa")
+        design = s.study_design or "—"
+        interv = s.patient_population or s.inclusion_criteria or "—"
+        ctrl   = s.group_comparison or "—"
+        outc   = s.survival_outcomes or s.key_findings or "—"
+        rob_val = _trunc(s.rob_overall or "—", 20)
+        rob_color = {"low": "#2ecc71", "some_concerns": "#f39c12", "high": "#e74c3c"}.get(s.rob_overall, "#aaaaaa")
         data.append([
-            Paragraph(_safe(label[:40]), ParagraphStyle("tc", fontSize=8, leading=10)),
-            Paragraph(_safe(s.study_design or "—"), ParagraphStyle("tc2", fontSize=8, leading=10)),
+            Paragraph(_safe(_trunc(label, 40)),  ParagraphStyle("tc", fontSize=8, leading=10)),
+            Paragraph(_safe(_trunc(design, 30)), ParagraphStyle("tc2", fontSize=8, leading=10)),
             str(n),
-            Paragraph(_safe(interv), ParagraphStyle("tc3", fontSize=7.5, leading=10)),
-            Paragraph(_safe(ctrl),   ParagraphStyle("tc4", fontSize=7.5, leading=10)),
-            Paragraph(_safe(outc),   ParagraphStyle("tc5", fontSize=7.5, leading=10)),
+            Paragraph(_safe(_trunc(interv, 60)), ParagraphStyle("tc3", fontSize=7.5, leading=10)),
+            Paragraph(_safe(_trunc(ctrl, 50)),   ParagraphStyle("tc4", fontSize=7.5, leading=10)),
+            Paragraph(_safe(_trunc(outc, 60)),   ParagraphStyle("tc5", fontSize=7.5, leading=10)),
             Paragraph(_safe(rob_val), ParagraphStyle("tc6", fontSize=8, leading=10,
                                                      textColor=colors.HexColor(rob_color))),
         ])
@@ -248,7 +266,7 @@ def _cover(story, review: Review, st: dict, n_studies: int):
             if val:
                 pico_rows.append([
                     Paragraph(f"<b>{label}</b>", ParagraphStyle("pl", fontSize=9, textColor=C_BLUE)),
-                    Paragraph(_safe(val), ParagraphStyle("pv", fontSize=9, leading=13)),
+                    Paragraph(_safe(_trunc(val, 600)), ParagraphStyle("pv", fontSize=9, leading=13)),
                 ])
         if pico_rows:
             pico_tbl = Table(pico_rows, colWidths=[4*cm, 12*cm])
@@ -670,7 +688,14 @@ def export_pdf(review_id: int, db: Session = Depends(get_db)):
     story.append(_para(
         review.search_strategy or "[Search strategy not yet documented]", st["body_sm"]))
 
-    doc.build(story)
+    try:
+        doc.build(story)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=500,
+            detail=f"No se pudo generar el PDF: {exc}. Revisa si algún campo de texto de los estudios "
+                    "(p. ej. diseño de estudio) tiene contenido inusualmente largo.",
+        )
     buf.seek(0)
 
     safe_title = (review.title or "review").replace(" ", "_")[:60]
