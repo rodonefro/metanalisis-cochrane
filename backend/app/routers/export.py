@@ -1,6 +1,7 @@
 import json
 import base64
 import io
+import re
 from datetime import datetime
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -628,7 +629,24 @@ def export_pdf(review_id: int, db: Session = Depends(get_db)):
     story.append(_para("Included studies", st["h3"]))
 
     if review.references:
-        story.append(_para(review.references, st["body_sm"]))
+        # AI-generated references come as one numbered list; a single Paragraph
+        # collapses all newlines into running prose (ReportLab ignores literal
+        # "\n" unless it's an explicit <br/>), so each reference must be its own
+        # Paragraph to render as a proper list, one per line.
+        ref_lines = [ln.strip() for ln in review.references.splitlines() if ln.strip()]
+        if len(ref_lines) <= 1:
+            # The AI returned everything on one line — split right before each
+            # reference-number marker ("2. Author...", "3. Author..."). The
+            # lookbehind keeps this from also matching digits inside a DOI or
+            # page range (e.g. "...0000002485." or "145-150."), and requiring
+            # a capital letter right after avoids splitting on "150. doi:...".
+            ref_lines = [
+                m.strip() for m in re.split(r"(?<![\d.])(?=\d{1,3}\.\s[A-ZÁÉÍÓÚÑ])", review.references)
+                if m.strip()
+            ]
+        for ln in ref_lines:
+            story.append(_para(ln, st["body_sm"]))
+            story.append(Spacer(1, 0.12 * cm))
     elif studies:
         for i, s in enumerate(studies, 1):
             authors  = s.authors or "Authors unknown"

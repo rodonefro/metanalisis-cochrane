@@ -261,9 +261,11 @@ def generate_references(
         "Genera en ESPAÑOL una lista de referencias completa y correctamente formateada "
         "para todos los estudios incluidos usando el formato especificado arriba. "
         "Numera cada referencia secuencialmente. "
+        "IMPORTANTE: cada referencia debe ir en su PROPIA línea, separada de la siguiente "
+        "por un salto de línea — nunca pongas dos o más referencias en la misma línea. "
         "Si falta metadato específico (volumen, páginas, DOI), usa la información disponible "
         "y marca los campos faltantes con '[datos no disponibles]'. "
-        "Genera únicamente la lista numerada de referencias, sin encabezados ni preámbulo."
+        "Genera únicamente la lista numerada de referencias (una por línea), sin encabezados ni preámbulo."
     )
     return _call_claude(SYSTEM_COCHRANE, user)
 
