@@ -271,7 +271,9 @@ export default function StudiesTable({ reviewId, studies }: Props) {
                               : <XCircle size={16} className="text-red-400" />}
                           </button>
                           {s.screening_reviewed && (
-                            <Lock size={10} className="text-gray-300" title="Decisión final — el cribado IA no la modificará" />
+                            <span title="Decisión final — el cribado IA no la modificará">
+                              <Lock size={10} className="text-gray-300" />
+                            </span>
                           )}
                         </div>
                       </td>
