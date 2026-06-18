@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { BarChart2, ChevronDown, ChevronUp, Play, Wand2, Download, Filter, Table, Zap, CheckCircle2, Loader2 } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { runAnalysis, getLatestAnalysis, generateSection, getForestPlot, getFunnelPlot, getGradeTable, aiScreenStudies, aiExtractData } from '../services/api'
+import { runAnalysis, getLatestAnalysis, generateSection, getForestPlot, getFunnelPlot, getGradeTable, aiScreenStudies, aiExtractData, autofillPrisma } from '../services/api'
 import type { Analysis } from '../services/api'
 
 interface Props {
@@ -186,6 +186,7 @@ export default function AnalysisPanel({ reviewId }: Props) {
 
   const PIPELINE_STEPS = [
     { id: 'screening',  label: 'Cribado IA' },
+    { id: 'prisma',     label: 'PRISMA' },
     { id: 'extraction', label: 'Extracción' },
     { id: 'analysis',   label: 'Meta-análisis' },
     { id: 'plots',      label: 'Gráficas' },
@@ -195,20 +196,28 @@ export default function AnalysisPanel({ reviewId }: Props) {
     setPipelineRunning(true)
     try {
       setPipelineStep('screening')
-      toast.loading('Paso 1/4 — Cribado de estudios con IA...', { id: 'pipeline' })
+      toast.loading('Paso 1/5 — Cribado de estudios con IA...', { id: 'pipeline' })
       await aiScreenStudies(reviewId)
 
+      // Keep the PRISMA flow diagram in sync with the studies the AI just
+      // included/excluded — otherwise it freezes at whatever count it had
+      // before this run and no longer matches the meta-analysis k.
+      setPipelineStep('prisma')
+      toast.loading('Paso 2/5 — Sincronizando diagrama PRISMA...', { id: 'pipeline' })
+      await autofillPrisma(reviewId)
+      qc.invalidateQueries({ queryKey: ['review', reviewId] })
+
       setPipelineStep('extraction')
-      toast.loading('Paso 2/4 — Extracción de datos cuantitativos...', { id: 'pipeline' })
+      toast.loading('Paso 3/5 — Extracción de datos cuantitativos...', { id: 'pipeline' })
       await aiExtractData(reviewId)
 
       setPipelineStep('analysis')
-      toast.loading('Paso 3/4 — Ejecutando meta-análisis estadístico...', { id: 'pipeline' })
+      toast.loading('Paso 4/5 — Ejecutando meta-análisis estadístico...', { id: 'pipeline' })
       await runAnalysis(reviewId)
       qc.invalidateQueries({ queryKey: ['analysis', reviewId] })
 
       setPipelineStep('plots')
-      toast.loading('Paso 4/4 — Generando gráficas con interpretación IA...', { id: 'pipeline' })
+      toast.loading('Paso 5/5 — Generando gráficas con interpretación IA...', { id: 'pipeline' })
       setLoadingForest(true); setLoadingFunnel(true); setLoadingGrade(true)
       const [forestRes, funnelRes, gradeRes] = await Promise.all([
         getForestPlot(reviewId),
