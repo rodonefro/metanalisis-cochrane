@@ -241,164 +241,269 @@ def generate_prisma_2020(
     included: _Opt[int] = None,
     reports_included: _Opt[int] = None,
 ) -> str:
-    """Generate PRISMA 2020 flowchart and return base64 PNG."""
+    """Generate a publication-quality PRISMA 2020 flow diagram, base64 PNG.
+
+    Every box's height is derived from its actual (pre-wrapped) text, and the
+    figure's total height is computed from the sum of all boxes before a
+    single pixel is drawn — so the diagram never clips or overlaps text
+    regardless of how many databases or exclusion reasons are listed, and
+    never wastes space when there are few.
+    """
+    import textwrap
 
     def _n(v) -> str:
         return str(v) if v is not None else "?"
 
-    def _box(ax, x, y, w, h, text, color="#DDEEFF", fontsize=8.5, bold=False):
-        rect = mpatches.FancyBboxPatch(
-            (x, y), w, h,
-            boxstyle="round,pad=0.015",
-            facecolor=color, edgecolor="#4a6fa5", linewidth=1.2, zorder=2,
-        )
-        ax.add_patch(rect)
-        ax.text(
-            x + w / 2, y + h / 2, text,
-            ha="center", va="center", fontsize=fontsize,
-            fontweight="bold" if bold else "normal",
-            wrap=True, zorder=3,
-            multialignment="center",
-        )
-
-    def _arrow(ax, x1, y1, x2, y2):
-        ax.annotate(
-            "", xy=(x2, y2), xytext=(x1, y1),
-            arrowprops=dict(arrowstyle="-|>", color="#4a6fa5", lw=1.3),
-            zorder=4,
-        )
-
-    def _section_label(ax, y, label):
-        ax.text(
-            0.01, y, label,
-            ha="left", va="center", fontsize=9, fontweight="bold",
-            color="#2c3e50",
-            bbox=dict(facecolor="#2c3e50", edgecolor="none", alpha=0.12,
-                      boxstyle="round,pad=0.3"),
-        )
-
-    # Parse db_names: "PubMed=45,Scopus=32"
-    db_lines = []
-    db_total = 0
-    if db_names:
-        for part in db_names.split(","):
+    def _parse_kv_list(s: _Opt[str]):
+        """'PubMed=45,Scopus=32' -> (['PubMed (n = 45)', 'Scopus (n = 32)'], 77)."""
+        items, total = [], 0
+        for part in (s or "").split(","):
             part = part.strip()
+            if not part:
+                continue
             if "=" in part:
                 nm, cnt = part.rsplit("=", 1)
                 try:
                     cnt_i = int(cnt.strip())
-                    db_total += cnt_i
-                    db_lines.append(f"• {nm.strip()} (n = {cnt_i})")
+                    total += cnt_i
+                    items.append(f"{nm.strip()} (n = {cnt_i})")
+                    continue
                 except ValueError:
-                    db_lines.append(f"• {part}")
-            elif part:
-                db_lines.append(f"• {part}")
+                    pass
+            items.append(part)
+        return items, total
 
-    db_text = f"Records identified from databases\n(n = {db_total if db_total else '?'})\n"
-    db_text += "\n".join(db_lines) if db_lines else ""
+    # ── Cochrane-aligned palette ─────────────────────────────────────────────
+    NAVY         = "#1B2A4A"
+    BLUE_BORDER  = "#0B5FA5"
+    BLUE_FILL    = "#EAF3FB"
+    RED_BORDER   = "#C0392B"
+    RED_FILL     = "#FDEDED"
+    AMBER_BORDER = "#C2840C"
+    AMBER_FILL   = "#FFF6E3"
+    GREEN_BORDER = "#1E8449"
+    GREEN_FILL   = "#EAF8EF"
+    TEXT         = NAVY
+    TEXT_MUTED   = "#5B6B82"
 
-    removed_lines = []
+    FIG_W = 13.0
+    MAIN_X, MAIN_W = 0.115, 0.40
+    GAP_COL        = 0.045
+    SIDE_X         = MAIN_X + MAIN_W + GAP_COL
+    SIDE_W         = 0.345
+    FULL_W         = (SIDE_X + SIDE_W) - MAIN_X
+
+    PAD_TOP_PT, PAD_BOTTOM_PT = 10, 10
+    LEADING        = 1.32
+    GAP_PT         = 16   # vertical gap between stacked boxes within a stage
+    GAP_SECTION_PT = 26   # extra gap between PRISMA stages
+    HEADER_PT      = 70
+    FOOTER_PT      = 26
+
+    def _wrap(text, fontsize, w_axes, bullet=False):
+        box_w_pt = w_axes * FIG_W * 72
+        avg_char_pt = fontsize * 0.52
+        pad_x_pt = 16
+        chars = max(10, int((box_w_pt - 2 * pad_x_pt) / avg_char_pt))
+        kwargs = {"width": chars}
+        if bullet:
+            kwargs["initial_indent"] = "•  "
+            kwargs["subsequent_indent"] = "    "
+        return textwrap.wrap(text, **kwargs) or [text]
+
+    def _block(text, fontsize, w_axes, bold=False, color=TEXT, bullet=False):
+        return [(ln, fontsize, bold, color) for ln in _wrap(text, fontsize, w_axes, bullet)]
+
+    def _height_pt(lines) -> float:
+        h = PAD_TOP_PT + PAD_BOTTOM_PT
+        for _, fs, *_rest in lines:
+            h += fs * LEADING
+        return h
+
+    # ── Phase 1: build every text block and measure heights in points ───────
+    # (independent of final figure height, so the sizing decision below is exact)
+    db_src, db_total = _parse_kv_list(db_names)
+    db_lines = _block("Records identified from databases and registers", 9.3, MAIN_W)
+    db_lines.append((f"n = {db_total if db_total else _n(None)}", 11.5, True, BLUE_BORDER))
+    for d in db_src:
+        db_lines += _block(d, 8.2, MAIN_W, color=TEXT_MUTED, bullet=True)
+    db_h = _height_pt(db_lines)
+
+    other_lines, other_h = None, 0
+    if other_sources is not None:
+        other_lines = _block("Records identified from other methods", 9.3, SIDE_W)
+        other_lines.append((f"n = {_n(other_sources)}", 11.5, True, BLUE_BORDER))
+        other_h = _height_pt(other_lines)
+    row1_h = max(db_h, other_h)
+
+    removed_w = FULL_W if other_sources is not None else MAIN_W
+    removed_src = []
     if duplicates_removed is not None:
-        removed_lines.append(f"Duplicate records (n = {duplicates_removed})")
+        removed_src.append(f"Duplicate records removed (n = {duplicates_removed})")
     if other_removed is not None:
-        removed_lines.append(f"Other reasons (n = {other_removed})")
-    removed_text = "Records removed before screening:\n" + (
-        "\n".join(f"• {l}" for l in removed_lines) if removed_lines
-        else "• (n = ?)"
-    )
+        removed_src.append(f"Records removed for other reasons (n = {other_removed})")
+    removed_lines = _block("Records removed before screening", 9.5, removed_w, bold=True, color=NAVY)
+    for r in (removed_src or ["(n = ?)"]):
+        removed_lines += _block(r, 8.2, removed_w, color=TEXT_MUTED, bullet=True)
+    removed_h = _height_pt(removed_lines)
 
-    excl_text = (
-        f"Reports excluded\n(n = {_n(excluded_eligibility)})"
-        + (("\nReasons:\n" + "\n".join(
-            f"• {r.strip()}"
-            for r in exclusion_reasons.split(",") if r.strip()
-        )) if exclusion_reasons else "")
-    )
+    def _row_blocks(main_text, main_n, side_text, side_n, side_extra=None):
+        m_lines = _block(main_text, 9.3, MAIN_W)
+        m_lines.append((f"n = {_n(main_n)}", 11.5, True, BLUE_BORDER))
+        s_lines = _block(side_text, 9.3, SIDE_W, color=RED_BORDER)
+        s_lines.append((f"n = {_n(side_n)}", 11.5, True, RED_BORDER))
+        for r in (side_extra or []):
+            s_lines += _block(r, 8.0, SIDE_W, color=TEXT_MUTED, bullet=True)
+        return m_lines, s_lines, max(_height_pt(m_lines), _height_pt(s_lines))
 
-    # Canvas
-    fig, ax = plt.subplots(figsize=(13, 16))
+    scr_m, scr_s, scr_h = _row_blocks(
+        "Records screened", screened, "Records excluded", excluded_screening)
+    snr_m, snr_s, snr_h = _row_blocks(
+        "Reports sought for retrieval", sought, "Reports not retrieved", not_retrieved)
+    excl_reasons_list, _ = _parse_kv_list(exclusion_reasons)
+    elg_m, elg_s, elg_h = _row_blocks(
+        "Reports assessed for eligibility", assessed,
+        "Reports excluded", excluded_eligibility, side_extra=excl_reasons_list)
+
+    inc_lines = _block("Studies included in review", 10.5, FULL_W, bold=True, color=GREEN_BORDER)
+    inc_lines.append((f"n = {_n(included)}", 13.5, True, GREEN_BORDER))
+    if reports_included is not None:
+        inc_lines += _block("Reports of included studies (entered meta-analysis)", 9.3, FULL_W, color=NAVY)
+        inc_lines.append((f"n = {reports_included}", 11.5, True, NAVY))
+    inc_h = _height_pt(inc_lines)
+
+    # ── Total height drives the figure size — guarantees no clipping ────────
+    total_pt = (
+        HEADER_PT
+        + row1_h + GAP_PT + removed_h + GAP_SECTION_PT
+        + scr_h + GAP_PT + snr_h + GAP_PT + elg_h + GAP_SECTION_PT
+        + inc_h + FOOTER_PT
+    )
+    FIG_H = total_pt / 72 * 1.015
+
+    fig, ax = plt.subplots(figsize=(FIG_W, FIG_H))
     ax.set_xlim(0, 1)
     ax.set_ylim(0, 1)
     ax.axis("off")
     fig.patch.set_facecolor("white")
+    TOTAL_PT = FIG_H * 72
 
-    # ── Section labels (left strip) ─────────────────────────────────────────
-    for label, yc in [
-        ("Identification", 0.865),
-        ("Screening", 0.595),
-        ("Included", 0.105),
-    ]:
+    def _ax(pt: float) -> float:
+        return pt / TOTAL_PT
+
+    def _draw(x, top_y, w, lines, fill, border, lw=1.3, radius=0.011):
+        h = _ax(_height_pt(lines))
+        bottom_y = top_y - h
         rect = mpatches.FancyBboxPatch(
-            (0.01, yc - 0.035), 0.065, 0.07,
-            boxstyle="round,pad=0.01",
-            facecolor="#2c3e50", edgecolor="none", zorder=1,
+            (x, bottom_y), w, h,
+            boxstyle=f"round,pad=0.004,rounding_size={radius}",
+            facecolor=fill, edgecolor=border, linewidth=lw, zorder=2,
         )
         ax.add_patch(rect)
-        ax.text(
-            0.043, yc, label,
-            ha="center", va="center", fontsize=8, fontweight="bold",
-            color="white", rotation=90, zorder=2,
+        cursor = top_y - _ax(PAD_TOP_PT)
+        for text, fs, bold, color in lines:
+            lh = _ax(fs * LEADING)
+            cursor -= lh / 2
+            ax.text(x + w / 2, cursor, text, ha="center", va="center",
+                     fontsize=fs, fontweight="bold" if bold else "normal",
+                     color=color, zorder=3)
+            cursor -= lh / 2
+        return top_y, bottom_y
+
+    def _varrow(x, y1, y2, color=BLUE_BORDER, lw=1.6):
+        ax.annotate("", xy=(x, y2), xytext=(x, y1),
+                    arrowprops=dict(arrowstyle="-|>", color=color, lw=lw, mutation_scale=15),
+                    zorder=4)
+
+    def _harrow(x1, y, x2, color=BLUE_BORDER, lw=1.6):
+        ax.annotate("", xy=(x2, y), xytext=(x1, y),
+                    arrowprops=dict(arrowstyle="-|>", color=color, lw=lw, mutation_scale=15),
+                    zorder=4)
+
+    main_cx = MAIN_X + MAIN_W / 2
+
+    # ── Header ────────────────────────────────────────────────────────────
+    ax.text(0.5, 1 - _ax(20), "PRISMA 2020 Flow Diagram", ha="center", va="center",
+            fontsize=17, fontweight="bold", color=NAVY, zorder=5)
+    ax.text(0.5, 1 - _ax(38),
+            "Identification of studies via databases and registers",
+            ha="center", va="center", fontsize=9, color=TEXT_MUTED, style="italic", zorder=5)
+    rule_y = 1 - _ax(50)
+    ax.plot([MAIN_X, SIDE_X + SIDE_W], [rule_y, rule_y], color=BLUE_BORDER, lw=1.6, zorder=5)
+    cursor_y = rule_y - _ax(GAP_PT)
+
+    # ── Identification ────────────────────────────────────────────────────
+    db_top, db_bottom = _draw(MAIN_X, cursor_y, MAIN_W, db_lines, BLUE_FILL, BLUE_BORDER)
+    other_top = other_bottom = None
+    if other_lines is not None:
+        other_top, other_bottom = _draw(SIDE_X, cursor_y, SIDE_W, other_lines, BLUE_FILL, BLUE_BORDER)
+    row1_bottom = min(db_bottom, other_bottom) if other_bottom is not None else db_bottom
+    cursor_y = row1_bottom - _ax(GAP_PT)
+
+    removed_top, removed_bottom = _draw(MAIN_X, cursor_y, removed_w, removed_lines, AMBER_FILL, AMBER_BORDER)
+    _varrow(main_cx, db_bottom, removed_top)
+    if other_top is not None:
+        _varrow(SIDE_X + SIDE_W / 2, other_bottom, removed_top)
+    id_top, id_bottom = db_top, removed_bottom
+    cursor_y = removed_bottom - _ax(GAP_SECTION_PT)
+
+    # ── Screening ─────────────────────────────────────────────────────────
+    scr_m_top, scr_m_bottom = _draw(MAIN_X, cursor_y, MAIN_W, scr_m, BLUE_FILL, BLUE_BORDER)
+    _, scr_s_bottom = _draw(SIDE_X, cursor_y, SIDE_W, scr_s, RED_FILL, RED_BORDER)
+    _varrow(main_cx, removed_bottom, scr_m_top)
+    _harrow(MAIN_X + MAIN_W, (scr_m_top + scr_m_bottom) / 2, SIDE_X)
+    cursor_y = min(scr_m_bottom, scr_s_bottom) - _ax(GAP_PT)
+
+    snr_m_top, snr_m_bottom = _draw(MAIN_X, cursor_y, MAIN_W, snr_m, BLUE_FILL, BLUE_BORDER)
+    _, snr_s_bottom = _draw(SIDE_X, cursor_y, SIDE_W, snr_s, RED_FILL, RED_BORDER)
+    _varrow(main_cx, scr_m_bottom, snr_m_top)
+    _harrow(MAIN_X + MAIN_W, (snr_m_top + snr_m_bottom) / 2, SIDE_X)
+    cursor_y = min(snr_m_bottom, snr_s_bottom) - _ax(GAP_PT)
+
+    elg_m_top, elg_m_bottom = _draw(MAIN_X, cursor_y, MAIN_W, elg_m, BLUE_FILL, BLUE_BORDER)
+    _, elg_s_bottom = _draw(SIDE_X, cursor_y, SIDE_W, elg_s, RED_FILL, RED_BORDER)
+    _varrow(main_cx, snr_m_bottom, elg_m_top)
+    _harrow(MAIN_X + MAIN_W, (elg_m_top + elg_m_bottom) / 2, SIDE_X)
+    screening_top, screening_bottom = scr_m_top, min(elg_m_bottom, elg_s_bottom)
+    cursor_y = screening_bottom - _ax(GAP_SECTION_PT)
+
+    # ── Included ──────────────────────────────────────────────────────────
+    inc_top, inc_bottom = _draw(MAIN_X, cursor_y, FULL_W, inc_lines, GREEN_FILL, GREEN_BORDER, lw=1.8)
+    _varrow(main_cx, elg_m_bottom, inc_top, color=GREEN_BORDER)
+
+    # ── Section tabs (sized to each stage's actual extent) ───────────────
+    TAB_FS = 9.5
+
+    def _section_tab(y_top, y_bottom, label):
+        cy = (y_top + y_bottom) / 2
+        tab_w = 0.052
+        # The rotated label's own footprint (rough avg-char-width heuristic,
+        # generous so the leading/trailing letter is never clipped by the
+        # tight bbox when savefig(bbox_inches="tight") crops the PNG) sets a
+        # hard floor — a short section must never be drawn shorter than the
+        # text it has to hold, regardless of how little content it contains.
+        text_min_pt = len(label) * TAB_FS * 0.62 + 16
+        tab_h = max(y_top - y_bottom, _ax(text_min_pt))
+        rect = mpatches.FancyBboxPatch(
+            (0.018, cy - tab_h / 2), tab_w, tab_h,
+            boxstyle="round,pad=0.003,rounding_size=0.01",
+            facecolor=NAVY, edgecolor="none", zorder=2,
         )
+        ax.add_patch(rect)
+        ax.text(0.018 + tab_w / 2, cy, label, ha="center", va="center",
+                fontsize=TAB_FS, fontweight="bold", color="white", rotation=90, zorder=3)
 
-    # ── Row 1: Databases + Other sources ──────────────────────────────────
-    _box(ax, 0.09, 0.84, 0.38, 0.085,
-         db_text, color="#ddeeff")
-    if other_sources is not None:
-        _box(ax, 0.53, 0.84, 0.38, 0.085,
-             f"Records identified from other sources\n(registers, grey lit., etc.)\n(n = {_n(other_sources)})",
-             color="#ddeeff")
+    _section_tab(id_top, id_bottom, "Identification")
+    _section_tab(screening_top, screening_bottom, "Screening")
+    _section_tab(inc_top, inc_bottom, "Included")
 
-    # Arrow down from databases
-    _arrow(ax, 0.28, 0.84, 0.28, 0.80)
+    # ── Footer citation (required when reporting a PRISMA 2020 diagram) ──
+    ax.text(0.5, max(inc_bottom - _ax(16), 0.005),
+            "Page MJ, et al. The PRISMA 2020 statement. BMJ 2021;372:n71. "
+            "doi:10.1136/bmj.n71  •  prisma-statement.org",
+            ha="center", va="top", fontsize=7, color=TEXT_MUTED, style="italic", zorder=5)
 
-    # ── Row 2: Removed before screening ───────────────────────────────────
-    _box(ax, 0.09, 0.75, 0.38, 0.075,
-         removed_text, color="#fff3cd")
-
-    # Arrow down
-    _arrow(ax, 0.28, 0.75, 0.28, 0.705)
-
-    # ── Row 3: Screened ───────────────────────────────────────────────────
-    _box(ax, 0.09, 0.655, 0.34, 0.065,
-         f"Records screened\n(n = {_n(screened)})", color="#ddeeff")
-    _arrow(ax, 0.43, 0.6875, 0.53, 0.6875)
-    _box(ax, 0.53, 0.655, 0.38, 0.065,
-         f"Records excluded\n(n = {_n(excluded_screening)})", color="#fde8e8")
-
-    # Arrow down
-    _arrow(ax, 0.26, 0.655, 0.26, 0.61)
-
-    # ── Row 4: Reports sought ─────────────────────────────────────────────
-    _box(ax, 0.09, 0.555, 0.34, 0.065,
-         f"Reports sought for retrieval\n(n = {_n(sought)})", color="#ddeeff")
-    _arrow(ax, 0.43, 0.5875, 0.53, 0.5875)
-    _box(ax, 0.53, 0.555, 0.38, 0.065,
-         f"Reports not retrieved\n(n = {_n(not_retrieved)})", color="#fde8e8")
-
-    # Arrow down
-    _arrow(ax, 0.26, 0.555, 0.26, 0.51)
-
-    # ── Row 5: Eligibility ────────────────────────────────────────────────
-    _box(ax, 0.09, 0.44, 0.34, 0.08,
-         f"Reports assessed\nfor eligibility\n(n = {_n(assessed)})", color="#ddeeff")
-    _arrow(ax, 0.43, 0.48, 0.53, 0.48)
-    _box(ax, 0.53, 0.44, 0.38, 0.08,
-         excl_text, color="#fde8e8", fontsize=8)
-
-    # Arrow down
-    _arrow(ax, 0.26, 0.44, 0.26, 0.22)
-
-    # ── Row 6: Included ───────────────────────────────────────────────────
-    inc_text = f"Studies included in review\n(n = {_n(included)})"
-    if reports_included is not None:
-        inc_text += f"\nReports of included studies\n(n = {reports_included})"
-    _box(ax, 0.09, 0.13, 0.38, 0.09,
-         inc_text, color="#d4edda", bold=True, fontsize=9.5)
-
-    ax.set_title("PRISMA 2020 Flow Diagram", fontsize=13, fontweight="bold",
-                 pad=12, color="#2c3e50")
-    plt.tight_layout(pad=1.5)
-    return _b64(fig)
+    return _b64(fig, dpi=160)
 
 
 def generate_rob_traffic_light(studies_rob: list) -> str:
