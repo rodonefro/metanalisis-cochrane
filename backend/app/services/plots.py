@@ -323,7 +323,7 @@ def generate_prisma_2020(
     # ── Phase 1: build every text block and measure heights in points ───────
     # (independent of final figure height, so the sizing decision below is exact)
     db_src, db_total = _parse_kv_list(db_names)
-    db_lines = _block("Records identified from databases and registers", 9.3, MAIN_W)
+    db_lines = _block("Registros identificados de bases de datos y registros", 9.3, MAIN_W)
     db_lines.append((f"n = {db_total if db_total else _n(None)}", 11.5, True, BLUE_BORDER))
     for d in db_src:
         db_lines += _block(d, 8.2, MAIN_W, color=TEXT_MUTED, bullet=True)
@@ -331,7 +331,7 @@ def generate_prisma_2020(
 
     other_lines, other_h = None, 0
     if other_sources is not None:
-        other_lines = _block("Records identified from other methods", 9.3, SIDE_W)
+        other_lines = _block("Registros identificados de otros métodos", 9.3, SIDE_W)
         other_lines.append((f"n = {_n(other_sources)}", 11.5, True, BLUE_BORDER))
         other_h = _height_pt(other_lines)
     row1_h = max(db_h, other_h)
@@ -339,10 +339,10 @@ def generate_prisma_2020(
     removed_w = FULL_W if other_sources is not None else MAIN_W
     removed_src = []
     if duplicates_removed is not None:
-        removed_src.append(f"Duplicate records removed (n = {duplicates_removed})")
+        removed_src.append(f"Registros duplicados eliminados (n = {duplicates_removed})")
     if other_removed is not None:
-        removed_src.append(f"Records removed for other reasons (n = {other_removed})")
-    removed_lines = _block("Records removed before screening", 9.5, removed_w, bold=True, color=NAVY)
+        removed_src.append(f"Registros eliminados por otras razones (n = {other_removed})")
+    removed_lines = _block("Registros eliminados antes del cribado", 9.5, removed_w, bold=True, color=NAVY)
     for r in (removed_src or ["(n = ?)"]):
         removed_lines += _block(r, 8.2, removed_w, color=TEXT_MUTED, bullet=True)
     removed_h = _height_pt(removed_lines)
@@ -357,18 +357,18 @@ def generate_prisma_2020(
         return m_lines, s_lines, max(_height_pt(m_lines), _height_pt(s_lines))
 
     scr_m, scr_s, scr_h = _row_blocks(
-        "Records screened", screened, "Records excluded", excluded_screening)
+        "Registros cribados", screened, "Registros excluidos", excluded_screening)
     snr_m, snr_s, snr_h = _row_blocks(
-        "Reports sought for retrieval", sought, "Reports not retrieved", not_retrieved)
+        "Informes buscados para recuperación", sought, "Informes no recuperados", not_retrieved)
     excl_reasons_list, _ = _parse_kv_list(exclusion_reasons)
     elg_m, elg_s, elg_h = _row_blocks(
-        "Reports assessed for eligibility", assessed,
-        "Reports excluded", excluded_eligibility, side_extra=excl_reasons_list)
+        "Informes evaluados para elegibilidad", assessed,
+        "Informes excluidos", excluded_eligibility, side_extra=excl_reasons_list)
 
-    inc_lines = _block("Studies included in review", 10.5, FULL_W, bold=True, color=GREEN_BORDER)
+    inc_lines = _block("Estudios incluidos en la revisión", 10.5, FULL_W, bold=True, color=GREEN_BORDER)
     inc_lines.append((f"n = {_n(included)}", 13.5, True, GREEN_BORDER))
     if reports_included is not None:
-        inc_lines += _block("Reports of included studies (entered meta-analysis)", 9.3, FULL_W, color=NAVY)
+        inc_lines += _block("Informes de estudios incluidos (en el meta-análisis)", 9.3, FULL_W, color=NAVY)
         inc_lines.append((f"n = {reports_included}", 11.5, True, NAVY))
     inc_h = _height_pt(inc_lines)
 
@@ -423,10 +423,10 @@ def generate_prisma_2020(
     main_cx = MAIN_X + MAIN_W / 2
 
     # ── Header ────────────────────────────────────────────────────────────
-    ax.text(0.5, 1 - _ax(20), "PRISMA 2020 Flow Diagram", ha="center", va="center",
+    ax.text(0.5, 1 - _ax(20), "Diagrama de Flujo PRISMA 2020", ha="center", va="center",
             fontsize=17, fontweight="bold", color=NAVY, zorder=5)
     ax.text(0.5, 1 - _ax(38),
-            "Identification of studies via databases and registers",
+            "Identificación de estudios mediante bases de datos y registros",
             ha="center", va="center", fontsize=9, color=TEXT_MUTED, style="italic", zorder=5)
     rule_y = 1 - _ax(50)
     ax.plot([MAIN_X, SIDE_X + SIDE_W], [rule_y, rule_y], color=BLUE_BORDER, lw=1.6, zorder=5)
@@ -493,11 +493,11 @@ def generate_prisma_2020(
         ax.text(0.018 + tab_w / 2, cy, label, ha="center", va="center",
                 fontsize=TAB_FS, fontweight="bold", color="white", rotation=90, zorder=3)
 
-    _section_tab(id_top, id_bottom, "Identification")
-    _section_tab(screening_top, screening_bottom, "Screening")
-    _section_tab(inc_top, inc_bottom, "Included")
+    _section_tab(id_top, id_bottom, "Identificación")
+    _section_tab(screening_top, screening_bottom, "Cribado")
+    _section_tab(inc_top, inc_bottom, "Incluidos")
 
-    # ── Footer citation (required when reporting a PRISMA 2020 diagram) ──
+    # ── Cita al pie (obligatoria al reportar un diagrama PRISMA 2020) ────
     ax.text(0.5, max(inc_bottom - _ax(16), 0.005),
             "Page MJ, et al. The PRISMA 2020 statement. BMJ 2021;372:n71. "
             "doi:10.1136/bmj.n71  •  prisma-statement.org",
