@@ -14,6 +14,7 @@ matplotlib.rcParams['figure.max_open_warning'] = 5
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.lines import Line2D
+from matplotlib.transforms import blended_transform_factory
 
 from typing import Optional as _Opt
 
@@ -39,37 +40,68 @@ def generate_forest_plot(result: MetaResult, title: str = "",
     plt.close("all")
     gc.collect()
     try:
-        return _forest_plot_inner(result, title, null_value, fig_width=11)
+        return _forest_plot_inner(result, title, null_value, fig_width=13)
     except (MemoryError, Exception) as exc:
         if "bad_alloc" in str(exc) or isinstance(exc, MemoryError):
             plt.close("all")
             gc.collect()
-            return _forest_plot_inner(result, title, null_value, fig_width=9)
+            return _forest_plot_inner(result, title, null_value, fig_width=10.5)
         raise
 
 
 def _forest_plot_inner(result: MetaResult, title: str,
-                        null_value: Optional[float], fig_width: int = 11) -> str:
+                        null_value: Optional[float], fig_width: float = 13) -> str:
+    """Render the forest plot.
+
+    Font sizes here are deliberately large (14-19pt) relative to a typical
+    matplotlib chart. This image is always embedded in the Cochrane PDF at a
+    fixed physical width (~16.5cm, close to the page's full text width) —
+    roughly 0.6x this figure's design width — so whatever size is set here
+    is what actually reaches paper. Anything tuned to "look right" only in a
+    full-screen browser preview will print unreadably small.
+    """
     bt = lambda v: back_transform(v, result.effect_measure)
     is_log = result.effect_measure in ("OR", "RR")
     null = null_value if null_value is not None else (1.0 if is_log else 0.0)
+    # "PRECALCULATED" is a long internal code name, not a real effect-measure
+    # abbreviation like OR/RR/MD — too wide for the header column at this font
+    # size, so it gets a short display label instead.
+    measure_label = "TE" if result.effect_measure == "PRECALCULATED" else result.effect_measure
+
+    F_HEADER = 17.5
+    F_LABEL  = 15.5
+    F_DATA   = 15
+    F_POOLED = 17
+    F_HET    = 14.5
+    F_AXIS   = 14.5
+    F_TITLE  = 20
 
     studies = result.studies
     k = len(studies)
-    fig_height = max(5, min(k * 0.5 + 3.0, 24))
+    fig_height = max(5.5, min(k * 0.62 + 3.4, 26))
     fig, ax = plt.subplots(figsize=(fig_width, fig_height))
+
+    # Fixed margins set explicitly (instead of plt.tight_layout()) so the plot
+    # area's own width never changes. The study-label / CI / weight columns
+    # are anchored to the FIGURE (not the axes) via a blended transform, so
+    # their gaps stay constant in absolute terms regardless of how wide the
+    # data axis ends up — tight_layout() used to shrink the axes box to make
+    # room for this overhanging text, which silently compressed the axes-
+    # fraction gaps between columns until long values started overlapping.
+    LEFT, RIGHT, TOP, BOTTOM = 0.30, 0.60, 0.91, 0.10
+    fig.subplots_adjust(left=LEFT, right=RIGHT, top=TOP, bottom=BOTTOM)
+    figx = blended_transform_factory(fig.transFigure, ax.transData)
+    LABEL_X, CI_X, WEIGHT_X = LEFT - 0.012, RIGHT + 0.018, 0.975
 
     y_positions = list(range(k, 0, -1))
 
-    # Column headers — use get_yaxis_transform (x=axes fraction, y=data coords)
-    ax.text(-0.02, k + 1.5, "Study", fontsize=11, fontweight="bold", ha="right", va="center",
-            transform=ax.get_yaxis_transform())
-    ax.text(1.01, k + 1.5, f"{result.effect_measure} (95% CI)", fontsize=11,
-            fontweight="bold", ha="left", va="center",
-            transform=ax.get_yaxis_transform())
-    ax.text(1.26, k + 1.5, "Weight (%)", fontsize=11, fontweight="bold",
-            ha="right", va="center",
-            transform=ax.get_yaxis_transform())
+    # Column headers
+    ax.text(LABEL_X, k + 1.5, "Estudio", fontsize=F_HEADER, fontweight="bold",
+            ha="right", va="center", transform=figx)
+    ax.text(CI_X, k + 1.5, f"{measure_label} (IC 95%)", fontsize=F_HEADER,
+            fontweight="bold", ha="left", va="center", transform=figx)
+    ax.text(WEIGHT_X, k + 1.5, "Peso (%)", fontsize=F_HEADER, fontweight="bold",
+            ha="right", va="center", transform=figx)
 
     # X-axis limits
     all_vals = []
@@ -86,7 +118,7 @@ def _forest_plot_inner(result: MetaResult, title: str,
         x_hi = max(all_vals) + span * 0.15
 
     # Null line
-    ax.axvline(x=null, color="black", linewidth=0.9, linestyle="--", alpha=0.6)
+    ax.axvline(x=null, color="black", linewidth=1.1, linestyle="--", alpha=0.6)
 
     # Study rows
     for i, (s, y) in enumerate(zip(studies, y_positions)):
@@ -94,27 +126,27 @@ def _forest_plot_inner(result: MetaResult, title: str,
         lo = bt(s.ci_lower)
         hi = bt(s.ci_upper)
         weight = s.weight_re if result.model == "random" else s.weight_fe
-        box_size = max(0.05, weight / 100 * 0.65)
+        box_size = max(0.06, weight / 100 * 0.7)
 
         # CI line
-        ax.plot([lo, hi], [y, y], color="#2c3e50", linewidth=1.4, zorder=2)
+        ax.plot([lo, hi], [y, y], color="#2c3e50", linewidth=1.8, zorder=2)
         # Square
         rect = mpatches.FancyBboxPatch(
             (effect - box_size / 2, y - box_size / 4),
             box_size, box_size / 2,
             boxstyle="square,pad=0",
-            facecolor="#2980b9", edgecolor="#1a252f", linewidth=0.6, zorder=3,
+            facecolor="#2980b9", edgecolor="#1a252f", linewidth=0.7, zorder=3,
         )
         ax.add_patch(rect)
 
         # Labels
-        ax.text(-0.02, y, s.study_label, fontsize=10, ha="right", va="center",
-                transform=ax.get_yaxis_transform())
+        ax.text(LABEL_X, y, s.study_label, fontsize=F_LABEL, ha="right", va="center",
+                transform=figx)
         ci_text = f"{effect:.2f} [{lo:.2f}, {hi:.2f}]"
-        ax.text(1.01, y, ci_text, fontsize=9.5, ha="left", va="center",
-                transform=ax.get_yaxis_transform())
-        ax.text(1.26, y, f"{weight:.1f}", fontsize=9.5, ha="right", va="center",
-                transform=ax.get_yaxis_transform())
+        ax.text(CI_X, y, ci_text, fontsize=F_DATA, ha="left", va="center",
+                transform=figx)
+        ax.text(WEIGHT_X, y, f"{weight:.1f}", fontsize=F_DATA, ha="right", va="center",
+                transform=figx)
 
     # Pooled diamond
     p_eff = bt(result.pooled_effect)
@@ -123,45 +155,49 @@ def _forest_plot_inner(result: MetaResult, title: str,
     diamond_y = 0
     diamond_pts = np.array([
         [p_lo, diamond_y],
-        [p_eff, diamond_y + 0.30],
+        [p_eff, diamond_y + 0.32],
         [p_hi, diamond_y],
-        [p_eff, diamond_y - 0.30],
+        [p_eff, diamond_y - 0.32],
     ])
     diamond_patch = plt.Polygon(diamond_pts, closed=True,
-                                facecolor="#c0392b", edgecolor="#922b21", linewidth=0.9, zorder=4)
+                                facecolor="#c0392b", edgecolor="#922b21", linewidth=1.0, zorder=4)
     ax.add_patch(diamond_patch)
 
     # Separator line
-    ax.axhline(y=0.6, color="black", linewidth=0.9)
+    ax.axhline(y=0.6, color="black", linewidth=1.1)
 
     # Pooled label
-    ax.text(-0.02, diamond_y, f"Total ({result.model.capitalize()} effects, k={result.k})",
-            fontsize=10.5, fontweight="bold", ha="right", va="center",
-            transform=ax.get_yaxis_transform())
+    model_es = "aleatorios" if result.model == "random" else "fijos"
+    ax.text(LABEL_X, diamond_y, f"Total (efectos {model_es}, k={result.k})",
+            fontsize=F_POOLED, fontweight="bold", ha="right", va="center",
+            transform=figx)
     ci_pooled = f"{p_eff:.2f} [{p_lo:.2f}, {p_hi:.2f}]"
-    ax.text(1.01, diamond_y, ci_pooled, fontsize=10, fontweight="bold",
-            ha="left", va="center", transform=ax.get_yaxis_transform())
+    ax.text(CI_X, diamond_y, ci_pooled, fontsize=F_POOLED, fontweight="bold",
+            ha="left", va="center", transform=figx)
 
-    # Heterogeneity box
-    het = (f"Heterogeneity: Q={result.Q:.1f} (df={result.Q_df}, "
+    # Heterogeneity box — centered under the plot area itself (stays inside
+    # the fixed axes box, so the regular axes-fraction transform is fine here)
+    het = (f"Heterogeneidad: Q={result.Q:.1f} (df={result.Q_df}, "
            f"p={result.Q_pvalue:.3f}),  I²={result.I2:.0f}%,  τ²={result.tau2:.3f}")
-    ax.text(0.5, -1.0, het, fontsize=9.5, ha="center", va="center",
+    ax.text(0.5, -1.15, het, fontsize=F_HET, ha="center", va="center",
             transform=ax.get_yaxis_transform(),
-            bbox=dict(facecolor="#ecf0f1", edgecolor="gray", boxstyle="round,pad=0.35"))
+            bbox=dict(facecolor="#ecf0f1", edgecolor="gray", boxstyle="round,pad=0.4"))
 
     ax.set_xlim(x_lo, x_hi)
-    ax.set_ylim(-1.8, k + 2)
+    ax.set_ylim(-2.0, k + 2)
     ax.set_yticks([])
-    ax.set_xlabel(f"Favours control  ←  {result.effect_measure}  →  Favours intervention",
-                  fontsize=10)
-    ax.tick_params(axis="x", labelsize=9.5)
+    ax.set_xlabel(f"Favorece control  ←  {measure_label}  →  Favorece intervención",
+                  fontsize=F_AXIS)
+    ax.tick_params(axis="x", labelsize=F_AXIS)
     if title:
-        ax.set_title(title, fontsize=13, fontweight="bold", pad=12)
+        ax.set_title(title, fontsize=F_TITLE, fontweight="bold", pad=16)
     ax.spines["left"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.spines["top"].set_visible(False)
-    plt.tight_layout()
-    return _b64(fig)
+    # No plt.tight_layout() here on purpose — see the comment by `subplots_adjust`
+    # above. bbox_inches="tight" in _b64()'s savefig still trims the outer
+    # whitespace around the final content without touching internal proportions.
+    return _b64(fig, dpi=130)
 
 
 def generate_funnel_plot(result: MetaResult, title: str = "") -> str:

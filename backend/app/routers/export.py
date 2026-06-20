@@ -519,9 +519,11 @@ def export_pdf(review_id: int, db: Session = Depends(get_db)):
     _sub(story, "4.2.1", "Primary outcomes",
          review.intervention_effects or review.results_text, st, level=3)
 
-    # Forest plot
+    # Forest plot — embedded near the page's full text width (A4 minus 2.2cm
+    # margins each side = 16.6cm) so the large fonts rendered in plots.py
+    # reach paper at a legible size instead of being shrunk down ~40%.
     if analysis and analysis.forest_plot_b64:
-        img = _b64_to_image(analysis.forest_plot_b64, 14)
+        img = _b64_to_image(analysis.forest_plot_b64, 16.5)
         if img:
             story.append(KeepTogether([
                 img,
