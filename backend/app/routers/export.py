@@ -156,30 +156,30 @@ def _hr(story, color=C_LBLUE):
 # ── Study characteristics table ──────────────────────────────────────────────
 
 def _study_table(studies: list, st: dict):
-    """Return a ReportLab Table with characteristics of included studies."""
-    headers = ["Study", "Design", "N", "Intervention", "Control", "Outcome", "RoB"]
+    """Return a ReportLab Table with characteristics of included studies (Spanish)."""
+    headers = ["Autores", "Año", "Tipo de estudio", "Participantes (N)", "Intervención", "Resultados", "RoB"]
     data = [headers]
     for s in studies:
-        label = s.study_label or f"{s.authors or '?'} {s.year or ''}"
+        authors = s.authors or s.study_label or "—"
+        year = str(s.year) if s.year else "—"
         n = (s.total_intervention or 0) + (s.total_control or 0) or (s.sample_size or "—")
         design = s.study_design or "—"
-        interv = s.patient_population or s.inclusion_criteria or "—"
-        ctrl   = s.group_comparison or "—"
-        outc   = s.survival_outcomes or s.key_findings or "—"
+        interv = s.group_comparison or s.patient_population or "—"
+        outc   = s.survival_outcomes or s.key_findings or s.study_results or s.findings or "—"
         rob_val = _trunc(s.rob_overall or "—", 20)
         rob_color = {"low": "#2ecc71", "some_concerns": "#f39c12", "high": "#e74c3c"}.get(s.rob_overall, "#aaaaaa")
         data.append([
-            Paragraph(_safe(_trunc(label, 40)),  ParagraphStyle("tc", fontSize=8, leading=10)),
-            Paragraph(_safe(_trunc(design, 30)), ParagraphStyle("tc2", fontSize=8, leading=10)),
+            Paragraph(_safe(_trunc(authors, 40)), ParagraphStyle("tc", fontSize=8, leading=10)),
+            year,
+            Paragraph(_safe(_trunc(design, 25)), ParagraphStyle("tc2", fontSize=8, leading=10)),
             str(n),
-            Paragraph(_safe(_trunc(interv, 60)), ParagraphStyle("tc3", fontSize=7.5, leading=10)),
-            Paragraph(_safe(_trunc(ctrl, 50)),   ParagraphStyle("tc4", fontSize=7.5, leading=10)),
-            Paragraph(_safe(_trunc(outc, 60)),   ParagraphStyle("tc5", fontSize=7.5, leading=10)),
+            Paragraph(_safe(_trunc(interv, 70)), ParagraphStyle("tc3", fontSize=7.5, leading=10)),
+            Paragraph(_safe(_trunc(outc, 70)),   ParagraphStyle("tc5", fontSize=7.5, leading=10)),
             Paragraph(_safe(rob_val), ParagraphStyle("tc6", fontSize=8, leading=10,
                                                      textColor=colors.HexColor(rob_color))),
         ])
 
-    col_w = [3.2*cm, 2*cm, 1.2*cm, 3.2*cm, 2.8*cm, 3.2*cm, 1.4*cm]
+    col_w = [3*cm, 1*cm, 2.2*cm, 1.6*cm, 3.4*cm, 3.4*cm, 1.4*cm]
     tbl = Table(data, colWidths=col_w, repeatRows=1)
     style = [
         ("BACKGROUND",    (0, 0), (-1,  0), C_BLUE),
@@ -495,7 +495,7 @@ def export_pdf(review_id: int, db: Session = Depends(get_db)):
 
     # Study characteristics table
     if studies:
-        story.append(_para("Table 1. Characteristics of included studies", st["label"]))
+        story.append(_para("Tabla 1. Características de los estudios incluidos", st["label"]))
         story.append(Spacer(1, 0.1*cm))
         story.append(_study_table(studies, st))
         story.append(Spacer(1, 0.3*cm))
