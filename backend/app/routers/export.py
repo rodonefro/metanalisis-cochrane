@@ -711,7 +711,9 @@ def export_pdf(review_id: int, db: Session = Depends(get_db)):
                 for s in studies
             ]
             grade_b64 = generate_grade_table(result_dict, study_dicts, outcome=review.title or "")
-            img = _b64_to_image(grade_b64, 15.5)
+            # Embedded near the page's full text width, matching the forest
+            # plot — the chart's fonts are designed for this ~0.55x shrink.
+            img = _b64_to_image(grade_b64, 16.5)
             if img:
                 story.append(img)
                 story.append(_para(

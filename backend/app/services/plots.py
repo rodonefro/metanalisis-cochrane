@@ -599,7 +599,13 @@ def generate_rob_traffic_light(studies_rob: list) -> str:
 
 
 def generate_grade_table(result_dict: dict, studies: list, outcome: str = "") -> str:
-    """Generate a GRADE evidence profile as a vertical two-column card layout."""
+    """Generate a GRADE evidence profile as a vertical two-column card layout.
+
+    Like the forest plot, this image is embedded in the PDF at a fixed
+    physical width well under its design width, so font sizes are tuned
+    for ~0.55x shrinkage rather than for an on-screen preview — see
+    _forest_plot_inner's docstring for the full rationale.
+    """
     plt.close("all")
     gc.collect()
 
@@ -613,6 +619,13 @@ def generate_grade_table(result_dict: dict, studies: list, outcome: str = "") ->
     ci_hi = pooled.get("ci_upper")
     em = result_dict.get("effect_measure", "ES")
 
+    # Cochrane-aligned palette — same hues used in the forest plot / PRISMA diagram
+    NAVY   = "#1B2A4A"
+    GREEN  = "#1E8449"
+    AMBER  = "#C2840C"
+    RED    = "#C0392B"
+    BLUE   = "#0B5FA5"
+
     # Auto-rate GRADE domains
     high_risk = sum(
         1 for s in studies
@@ -622,52 +635,119 @@ def generate_grade_table(result_dict: dict, studies: list, outcome: str = "") ->
         if s.get(k_) == "high"
     )
     if high_risk == 0:
-        rob_rating, rob_color = "Not serious", "#27ae60"
+        rob_rating, rob_pts, rob_color = "No es seria", 0, GREEN
     elif high_risk <= 2:
-        rob_rating, rob_color = "Serious", "#f39c12"
+        rob_rating, rob_pts, rob_color = "Es seria (−1)", 1, AMBER
     else:
-        rob_rating, rob_color = "Very serious", "#e74c3c"
+        rob_rating, rob_pts, rob_color = "Es muy seria (−2)", 2, RED
 
     if i2 < 25:
-        incon_rating, incon_color = "Not serious", "#27ae60"
+        incon_rating, incon_pts, incon_color = "No es seria", 0, GREEN
     elif i2 < 50:
-        incon_rating, incon_color = "Serious", "#f39c12"
+        incon_rating, incon_pts, incon_color = "Es seria (−1)", 1, AMBER
     else:
-        incon_rating, incon_color = "Very serious", "#e74c3c"
+        incon_rating, incon_pts, incon_color = "Es muy seria (−2)", 2, RED
 
-    indir_rating, indir_color = "Not serious", "#27ae60"
+    indir_rating, indir_color = "No es seria", GREEN
 
     if effect and ci_lo is not None and ci_hi is not None and effect != 0:
         rel_width = abs((ci_hi - ci_lo) / effect)
         if rel_width < 0.5 and total_n >= 300:
-            impr_rating, impr_color = "Not serious", "#27ae60"
+            impr_rating, impr_pts, impr_color = "No es seria", 0, GREEN
         elif rel_width < 1.0 or total_n >= 100:
-            impr_rating, impr_color = "Serious", "#f39c12"
+            impr_rating, impr_pts, impr_color = "Es seria (−1)", 1, AMBER
         else:
-            impr_rating, impr_color = "Very serious", "#e74c3c"
+            impr_rating, impr_pts, impr_color = "Es muy seria (−2)", 2, RED
     else:
-        impr_rating, impr_color = "Serious", "#f39c12"
+        impr_rating, impr_pts, impr_color = "Es seria (−1)", 1, AMBER
 
-    pub_rating, pub_color = ("Undetected", "#27ae60") if k >= 5 else ("Undetected*", "#f39c12")
+    pub_rating, pub_color = ("No detectado", GREEN) if k >= 5 else ("No detectado*", AMBER)
 
-    downgrades = sum([
-        1 if rob_rating == "Serious" else (2 if rob_rating == "Very serious" else 0),
-        1 if incon_rating == "Serious" else (2 if incon_rating == "Very serious" else 0),
-        0,  # indirectness = not serious
-        1 if impr_rating == "Serious" else (2 if impr_rating == "Very serious" else 0),
-    ])
-    quality_labels = ["⊕⊕⊕⊕  HIGH", "⊕⊕⊕◯  MODERATE", "⊕⊕◯◯  LOW", "⊕◯◯◯  VERY LOW"]
-    quality_colors = ["#27ae60", "#2980b9", "#f39c12", "#e74c3c"]
+    downgrades = rob_pts + incon_pts + impr_pts  # indirectness fixed at 0; publication bias is informational, not scored
+    quality_labels = ["⊕⊕⊕⊕  ALTA", "⊕⊕⊕◯  MODERADA", "⊕⊕◯◯  BAJA", "⊕◯◯◯  MUY BAJA"]
+    quality_colors = [GREEN, BLUE, AMBER, RED]
     q_idx = min(downgrades, 3)
     quality_label = quality_labels[q_idx]
     quality_color = quality_colors[q_idx]
 
     effect_str = "—"
     if effect is not None and ci_lo is not None and ci_hi is not None:
-        effect_str = f"{em} {effect:.2f}  (95% CI  {ci_lo:.2f} – {ci_hi:.2f})"
+        effect_str = f"{em} {effect:.2f}  (IC 95%  {ci_lo:.2f} – {ci_hi:.2f})"
 
-    # ── Draw figure ───────────────────────────────────────────────────────────
-    FIG_W, FIG_H = 12.0, 8.2
+    # ── Font sizes (large — see module-level rationale on print shrinkage) ──
+    F_TITLE, F_SUBTITLE = 22, 15.5
+    F_LABEL, F_VALUE    = 16, 16
+    F_QUALITY           = 21
+    F_FOOTER            = 11.5
+
+    rows = [
+        ("Estudios (k) /\nParticipantes (N)",
+         f"{k} estudios     N = {total_n}",
+         "#EAF3FB"),
+        ("Estimación\ndel efecto",
+         effect_str,
+         "#EAF3FB"),
+        ("Riesgo de sesgo",
+         rob_rating,
+         rob_color + "2A"),
+        (f"Inconsistencia\n(I² = {i2:.0f}%)",
+         incon_rating,
+         incon_color + "2A"),
+        ("Evidencia\nindirecta",
+         indir_rating,
+         indir_color + "2A"),
+        ("Imprecisión",
+         impr_rating,
+         impr_color + "2A"),
+        ("Sesgo de\npublicación",
+         pub_rating,
+         pub_color + "2A"),
+    ]
+
+    # ── Layout: measured top-down so the figure height always matches its
+    # actual content (same approach used for the PRISMA diagram). Footer text
+    # is wrapped manually with textwrap rather than ax.text(wrap=True) —
+    # matplotlib's auto-wrap line count is unreliable to predict in advance,
+    # which previously caused clipped text at the bottom of the PRISMA
+    # diagram; pre-wrapping lets the reserved footer height always match the
+    # real number of lines.
+    import textwrap as _textwrap
+
+    FIG_W = 13.0
+    X_L, W_L = 0.35, 4.5
+    X_V = X_L + W_L + 0.25
+    W_V = FIG_W - X_V - 0.35
+    ROW_H = 1.00
+    STRIP_H = 1.05
+    STRIP_GAP = 0.22
+
+    F_FOOTER_LEADING = 1.4
+    footer_lines = (
+        _textwrap.wrap(
+            "* <5 estudios: evaluación del sesgo de publicación limitada.  "
+            "Evidencia indirecta por defecto: no es seria (ajustar manualmente si aplica).",
+            width=int((FIG_W - 0.6) * 72 / (F_FOOTER * 0.5)),
+        )
+        + _textwrap.wrap(
+            "El sesgo de publicación es informativo y no se computa en las degradaciones.  "
+            "GRADE: Grading of Recommendations Assessment, Development and Evaluation.",
+            width=int((FIG_W - 0.6) * 72 / (F_FOOTER * 0.5)),
+        )
+    )
+    FOOTER_H = 0.18 + len(footer_lines) * (F_FOOTER * F_FOOTER_LEADING) / 72
+
+    # The outcome subtitle is the review's title — arbitrary-length free text,
+    # unlike every other label in this chart — so it gets the same manual
+    # wrap treatment as the footer instead of running off the figure edge.
+    subtitle_text = outcome or "Desenlace primario"
+    subtitle_lines = _textwrap.wrap(
+        subtitle_text, width=int((FIG_W - 0.6) * 72 / (F_SUBTITLE * 0.52))
+    ) or [subtitle_text]
+    SUBTITLE_LEADING = 1.3
+    TITLE_H = 0.85 + len(subtitle_lines) * (F_SUBTITLE * SUBTITLE_LEADING) / 72
+
+    FIG_H = TITLE_H + ROW_H * len(rows) + STRIP_GAP + STRIP_H + FOOTER_H
+
     fig = plt.figure(figsize=(FIG_W, FIG_H), facecolor="white")
     ax = fig.add_axes([0, 0, 1, 1])
     ax.set_xlim(0, FIG_W)
@@ -675,83 +755,58 @@ def generate_grade_table(result_dict: dict, studies: list, outcome: str = "") ->
     ax.axis("off")
 
     # Title
-    ax.text(FIG_W / 2, FIG_H - 0.25,
-            "GRADE Evidence Profile — Certainty of Evidence",
-            ha="center", va="top", fontsize=13, fontweight="bold", color="#1a3a5c")
-    ax.text(FIG_W / 2, FIG_H - 0.72,
-            outcome or "Primary outcome",
-            ha="center", va="top", fontsize=11, style="italic", color="#444444")
+    ax.text(FIG_W / 2, FIG_H - 0.30,
+            "Perfil de Evidencia GRADE — Certeza de la Evidencia",
+            ha="center", va="top", fontsize=F_TITLE, fontweight="bold", color=NAVY)
+    sub_cursor = FIG_H - 0.78
+    sub_line_h = (F_SUBTITLE * SUBTITLE_LEADING) / 72
+    for line in subtitle_lines:
+        ax.text(FIG_W / 2, sub_cursor, line,
+                ha="center", va="top", fontsize=F_SUBTITLE, style="italic", color="#555555")
+        sub_cursor -= sub_line_h
 
-    # Layout constants
-    X_L = 0.3          # left edge of label column
-    W_L = 4.2          # label column width
-    X_V = X_L + W_L + 0.2   # left edge of value column
-    W_V = FIG_W - X_V - 0.3  # value column width
-    ROW_H = 0.68        # height per row
-    Y_START = FIG_H - 1.35  # y of TOP of first row
+    Y_START = FIG_H - TITLE_H
 
-    def _row(y_top, label, value, val_bg, label_bg="#1a3a5c", label_fg="white", val_fg="#111111"):
+    def _row(y_top, label, value, val_bg, label_bg=NAVY, label_fg="white", val_fg="#111111"):
         y = y_top - ROW_H
         ax.add_patch(mpatches.FancyBboxPatch(
-            (X_L, y + 0.04), W_L, ROW_H - 0.08,
-            boxstyle="round,pad=0.04", facecolor=label_bg, edgecolor="none", zorder=2))
+            (X_L, y + 0.06), W_L, ROW_H - 0.12,
+            boxstyle="round,pad=0.045", facecolor=label_bg, edgecolor="none", zorder=2))
         ax.text(X_L + W_L / 2, y + ROW_H / 2, label,
-                ha="center", va="center", fontsize=9.5, fontweight="bold",
-                color=label_fg, multialignment="center", zorder=3)
+                ha="center", va="center", fontsize=F_LABEL, fontweight="bold",
+                color=label_fg, multialignment="center", linespacing=1.3, zorder=3)
 
         ax.add_patch(mpatches.FancyBboxPatch(
-            (X_V, y + 0.04), W_V, ROW_H - 0.08,
-            boxstyle="round,pad=0.04", facecolor=val_bg, edgecolor="#cccccc",
-            linewidth=0.8, zorder=2))
+            (X_V, y + 0.06), W_V, ROW_H - 0.12,
+            boxstyle="round,pad=0.045", facecolor=val_bg, edgecolor="#cccccc",
+            linewidth=0.9, zorder=2))
         ax.text(X_V + W_V / 2, y + ROW_H / 2, value,
-                ha="center", va="center", fontsize=10, color=val_fg,
-                multialignment="center", zorder=3)
+                ha="center", va="center", fontsize=F_VALUE, color=val_fg,
+                multialignment="center", linespacing=1.3, zorder=3)
         return y  # returns bottom y of this row
-
-    rows = [
-        ("Studies (k)  /  Participants (N)",
-         f"{k} studies     N = {total_n}",
-         "#eef2fb"),
-        ("Effect estimate",
-         effect_str,
-         "#eef2fb"),
-        ("Risk of bias",
-         rob_rating,
-         rob_color + "33"),
-        (f"Inconsistency  (I² = {i2:.0f}%)",
-         incon_rating,
-         incon_color + "33"),
-        ("Indirectness",
-         indir_rating,
-         indir_color + "33"),
-        ("Imprecision",
-         impr_rating,
-         impr_color + "33"),
-        ("Publication bias",
-         pub_rating,
-         pub_color + "33"),
-    ]
 
     y_cursor = Y_START
     for label, value, val_bg in rows:
         y_cursor = _row(y_cursor, label, value, val_bg)
 
     # GRADE certainty summary strip
-    grade_y = y_cursor - 0.18
+    strip_y = y_cursor - STRIP_GAP - STRIP_H
     ax.add_patch(mpatches.FancyBboxPatch(
-        (X_L, grade_y), W_L + 0.2 + W_V, 0.78,
+        (X_L, strip_y), W_L + 0.25 + W_V, STRIP_H,
         boxstyle="round,pad=0.06", facecolor=quality_color,
-        edgecolor="#333333", linewidth=1.5, zorder=2))
-    ax.text(FIG_W / 2, grade_y + 0.39,
-            f"GRADE Certainty of Evidence:   {quality_label}",
-            ha="center", va="center", fontsize=13, fontweight="bold",
+        edgecolor="#333333", linewidth=1.6, zorder=2))
+    ax.text(FIG_W / 2, strip_y + STRIP_H / 2,
+            f"Certeza de la Evidencia (GRADE):   {quality_label}",
+            ha="center", va="center", fontsize=F_QUALITY, fontweight="bold",
             color="white", zorder=3)
 
-    # Footer note
-    ax.text(0.25, 0.18,
-            "* <5 studies — publication bias assessment limited  |  "
-            "Indirectness default: Not serious (manual upgrade/downgrade as needed)  |  "
-            "GRADE: Grading of Recommendations Assessment, Development and Evaluation",
-            fontsize=6.8, color="#888888", ha="left", va="bottom")
+    # Footer note (pre-wrapped — see comment above)
+    footer_cursor = strip_y - 0.18
+    line_h_in = (F_FOOTER * F_FOOTER_LEADING) / 72
+    for line in footer_lines:
+        footer_cursor -= line_h_in / 2
+        ax.text(0.30, footer_cursor, line, fontsize=F_FOOTER, color="#888888",
+                ha="left", va="center")
+        footer_cursor -= line_h_in / 2
 
-    return _b64(fig)
+    return _b64(fig, dpi=130)
