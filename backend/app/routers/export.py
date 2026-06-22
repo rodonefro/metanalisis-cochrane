@@ -155,48 +155,67 @@ def _hr(story, color=C_LBLUE):
 
 # ── Study characteristics table ──────────────────────────────────────────────
 
-def _study_table(studies: list, st: dict):
-    """Return a ReportLab Table with characteristics of included studies (Spanish)."""
-    headers = ["Autores", "Año", "Tipo de estudio", "Participantes (N)", "Intervención", "Resultados", "RoB"]
-    data = [headers]
-    for s in studies:
-        authors = s.authors or s.study_label or "—"
+_ROB_LABEL_ES = {"low": "Bajo", "some_concerns": "Algunas preocupaciones", "high": "Alto"}
+_ROB_COLOR = {"low": C_GREEN, "some_concerns": C_ORANGE, "high": C_RED}
+
+
+def _study_table(studies: list, st: dict) -> list:
+    """
+    Build one self-contained card per included study, stacking each field as
+    its own full-width row instead of cramming every study into one column
+    of a wide table — a single ~16cm-wide column lets long free-text fields
+    (intervención, resultados) wrap and stay fully readable instead of being
+    squeezed and truncated to fit a narrow horizontal cell.
+    """
+    label_style = ParagraphStyle("scLabel", fontSize=8.5, fontName="Helvetica-Bold",
+                                  textColor=C_DBLUE, leading=11)
+    value_style = ParagraphStyle("scValue", fontSize=8.5, leading=12, alignment=TA_JUSTIFY)
+    head_style = ParagraphStyle("scHead", fontSize=9.5, fontName="Helvetica-Bold",
+                                 textColor=C_WHITE, leading=12)
+
+    blocks = []
+    for i, s in enumerate(studies, 1):
+        authors = s.authors or "—"
         year = str(s.year) if s.year else "—"
+        title_text = s.study_label or f"{authors} ({year})"
         n = (s.total_intervention or 0) + (s.total_control or 0) or (s.sample_size or "—")
         design = s.study_design or "—"
         interv = s.group_comparison or s.patient_population or "—"
-        outc   = s.survival_outcomes or s.key_findings or s.study_results or s.findings or "—"
-        rob_val = _trunc(s.rob_overall or "—", 20)
-        rob_color = {"low": "#2ecc71", "some_concerns": "#f39c12", "high": "#e74c3c"}.get(s.rob_overall, "#aaaaaa")
-        data.append([
-            Paragraph(_safe(_trunc(authors, 40)), ParagraphStyle("tc", fontSize=8, leading=10)),
-            year,
-            Paragraph(_safe(_trunc(design, 25)), ParagraphStyle("tc2", fontSize=8, leading=10)),
-            str(n),
-            Paragraph(_safe(_trunc(interv, 70)), ParagraphStyle("tc3", fontSize=7.5, leading=10)),
-            Paragraph(_safe(_trunc(outc, 70)),   ParagraphStyle("tc5", fontSize=7.5, leading=10)),
-            Paragraph(_safe(rob_val), ParagraphStyle("tc6", fontSize=8, leading=10,
-                                                     textColor=colors.HexColor(rob_color))),
-        ])
+        outc = s.survival_outcomes or s.key_findings or s.study_results or s.findings or "—"
+        rob_raw = s.rob_overall
+        rob_text = _ROB_LABEL_ES.get(rob_raw, "—" if not rob_raw else rob_raw)
+        rob_color = _ROB_COLOR.get(rob_raw, colors.HexColor("#999999"))
 
-    col_w = [3*cm, 1*cm, 2.2*cm, 1.6*cm, 3.4*cm, 3.4*cm, 1.4*cm]
-    tbl = Table(data, colWidths=col_w, repeatRows=1)
-    style = [
-        ("BACKGROUND",    (0, 0), (-1,  0), C_BLUE),
-        ("TEXTCOLOR",     (0, 0), (-1,  0), C_WHITE),
-        ("FONTNAME",      (0, 0), (-1,  0), "Helvetica-Bold"),
-        ("FONTSIZE",      (0, 0), (-1,  0), 8),
-        ("BOTTOMPADDING", (0, 0), (-1,  0), 5),
-        ("TOPPADDING",    (0, 0), (-1,  0), 5),
-        ("ROWBACKGROUNDS",(0, 1), (-1, -1), [C_WHITE, C_LGREY]),
-        ("FONTSIZE",      (0, 1), (-1, -1), 8),
-        ("TOPPADDING",    (0, 1), (-1, -1), 3),
-        ("BOTTOMPADDING", (0, 1), (-1, -1), 3),
-        ("GRID",          (0, 0), (-1, -1), 0.4, colors.HexColor("#cccccc")),
-        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
-    ]
-    tbl.setStyle(TableStyle(style))
-    return tbl
+        rows = [
+            [Paragraph(_safe(f"{i}. {_trunc(title_text, 120)}"), head_style), ""],
+            ["Autores", Paragraph(_safe(_trunc(authors, 300)), value_style)],
+            ["Año", year],
+            ["Tipo de estudio", Paragraph(_safe(_trunc(design, 300)), value_style)],
+            ["Participantes (N)", str(n)],
+            ["Intervención", Paragraph(_safe(_trunc(interv, 800)), value_style)],
+            ["Resultados", Paragraph(_safe(_trunc(outc, 800)), value_style)],
+            ["Riesgo de sesgo", Paragraph(_safe(rob_text), ParagraphStyle(
+                "scRob", parent=value_style, textColor=rob_color, fontName="Helvetica-Bold"))],
+        ]
+
+        tbl = Table(rows, colWidths=[3.6 * cm, 12.9 * cm])
+        tbl.setStyle(TableStyle([
+            ("SPAN",          (0, 0), (-1, 0)),
+            ("BACKGROUND",    (0, 0), (-1, 0), C_BLUE),
+            ("TOPPADDING",    (0, 0), (-1, 0), 5),
+            ("BOTTOMPADDING", (0, 0), (-1, 0), 5),
+            ("BACKGROUND",    (0, 1), (0, -1), C_LBLUE),
+            ("FONTNAME",      (0, 1), (0, -1), "Helvetica-Bold"),
+            ("FONTSIZE",      (0, 1), (0, -1), 8.5),
+            ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+            ("GRID",          (0, 0), (-1, -1), 0.4, colors.HexColor("#cccccc")),
+            ("TOPPADDING",    (0, 1), (-1, -1), 4),
+            ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
+            ("LEFTPADDING",   (0, 0), (-1, -1), 7),
+            ("RIGHTPADDING",  (0, 0), (-1, -1), 7),
+        ]))
+        blocks.append(KeepTogether([tbl, Spacer(1, 0.3 * cm)]))
+    return blocks
 
 
 # ── Cover page ───────────────────────────────────────────────────────────────
@@ -496,9 +515,10 @@ def export_pdf(review_id: int, db: Session = Depends(get_db)):
     # Study characteristics table
     if studies:
         story.append(_para("Tabla 1. Características de los estudios incluidos", st["label"]))
-        story.append(Spacer(1, 0.1*cm))
-        story.append(_study_table(studies, st))
-        story.append(Spacer(1, 0.3*cm))
+        story.append(Spacer(1, 0.15*cm))
+        for block in _study_table(studies, st):
+            story.append(block)
+        story.append(Spacer(1, 0.2*cm))
 
     _sub(story, "4.1.3", "Excluded studies",
          "Studies were excluded due to: wrong population, wrong intervention, "
