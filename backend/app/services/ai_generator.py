@@ -212,6 +212,58 @@ def generate_discussion(review: dict, studies: list[dict], meta_results: dict | 
     return _call_claude(SYSTEM_COCHRANE, user)
 
 
+_ROB_DOMAINS = [
+    ("rob_random_sequence",       "Generación de la secuencia aleatoria (sesgo de selección)"),
+    ("rob_allocation_concealment", "Ocultamiento de la asignación (sesgo de selección)"),
+    ("rob_blinding_participants",  "Cegamiento de participantes y personal (sesgo de realización)"),
+    ("rob_blinding_outcome",       "Cegamiento de la evaluación de resultados (sesgo de detección)"),
+    ("rob_incomplete_data",        "Datos de resultado incompletos (sesgo de desgaste)"),
+    ("rob_selective_reporting",    "Notificación selectiva de resultados (sesgo de notificación)"),
+    ("rob_other",                  "Otros sesgos"),
+]
+
+
+def _rob_domain_tally(studies: list[dict]) -> str:
+    """Count low/some_concerns/high per RoB domain across studies — computed
+    directly from the data (not left for the model to guess) so the narrative
+    the AI writes cites real tallies, not hallucinated ones."""
+    lines = []
+    for key, label in _ROB_DOMAINS:
+        low = sum(1 for s in studies if s.get(key) == "low")
+        some = sum(1 for s in studies if s.get(key) == "some_concerns")
+        high = sum(1 for s in studies if s.get(key) == "high")
+        unrated = len(studies) - low - some - high
+        lines.append(
+            f"- {label}: bajo riesgo={low}, algunas preocupaciones={some}, "
+            f"alto riesgo={high}, sin evaluar={unrated}"
+        )
+    return "\n".join(lines)
+
+
+def generate_risk_of_bias_results(review: dict, studies: list[dict]) -> str:
+    """Cochrane-style 'Risk of bias in included studies' narrative (section 4.1.4)."""
+    ctx = _base_context(review, studies)
+    tally = _rob_domain_tally(studies)
+    k = len(studies)
+    user = (
+        f"{ctx}\n\n"
+        f"EVALUACIÓN DEL RIESGO DE SESGO (Cochrane RoB 2), {k} estudios incluidos, "
+        f"por dominio:\n{tally}\n\n"
+        "Escribe la sección 'Riesgo de sesgo en los estudios incluidos' en ESPAÑOL para esta "
+        "revisión sistemática Cochrane, usando ÚNICAMENTE los números reales proporcionados arriba "
+        "(no inventes cifras). Estructura:\n"
+        "1. Un párrafo introductorio resumiendo el panorama general de riesgo de sesgo "
+        "(cuántos estudios con bajo riesgo, algunas preocupaciones o alto riesgo en conjunto).\n"
+        "2. Un párrafo por cada uno de los 7 dominios de RoB 2, citando los conteos reales "
+        "y, si aplica, qué estudios contribuyeron al alto riesgo o las preocupaciones "
+        "(usa las etiquetas de los estudios cuando sea relevante).\n"
+        "3. Un párrafo final de síntesis sobre cómo el riesgo de sesgo general podría "
+        "afectar la confianza en las estimaciones del efecto.\n"
+        "Escribe aproximadamente 400-600 palabras, en prosa académica, sin encabezados ni viñetas."
+    )
+    return _call_claude(SYSTEM_COCHRANE, user)
+
+
 _CITATION_FORMATS = {
     "vancouver": (
         "Vancouver (numbered superscript, used in Cochrane/PubMed): "
@@ -332,6 +384,7 @@ def generate_section(
         "methods": generate_methods,
         "results": generate_results,
         "discussion": generate_discussion,
+        "risk_of_bias": generate_risk_of_bias_results,
         "references": None,
         "plot_interpretation": None,
     }
@@ -647,6 +700,27 @@ def interpret_grade_table(review: dict, result_dict: dict, studies: list) -> str
     msg = client.messages.create(
         model="claude-haiku-4-5-20251001",
         max_tokens=768,
+        system=SYSTEM_COCHRANE,
+        messages=[{"role": "user", "content": user}],
+    )
+    return msg.content[0].text.strip()
+
+
+def interpret_rob_plot(review: dict, studies: list) -> str:
+    """Auto-interpretation of the RoB 2 traffic-light plot in Spanish (Haiku, fast)."""
+    tally = _rob_domain_tally(studies)
+    k = len(studies)
+    user = (
+        f"REVISIÓN: {review.get('title', '')}\n"
+        f"Evaluación Cochrane RoB 2 de {k} estudios incluidos, por dominio:\n{tally}\n\n"
+        "Escribe en ESPAÑOL una interpretación breve (120-180 palabras) del gráfico de semáforo de "
+        "riesgo de sesgo: qué dominio(s) concentran más preocupaciones, el juicio de riesgo de sesgo "
+        "general, y cómo esto debería matizar la confianza en los resultados del metaanálisis."
+    )
+    client = _get_client()
+    msg = client.messages.create(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=512,
         system=SYSTEM_COCHRANE,
         messages=[{"role": "user", "content": user}],
     )

@@ -530,7 +530,9 @@ def export_pdf(review_id: int, db: Session = Depends(get_db)):
          review.risk_of_bias_results, st, level=3)
 
     if analysis and analysis.rob_plot_b64:
-        img = _b64_to_image(analysis.rob_plot_b64, 14)
+        # Embedded near the page's full text width, matching the forest plot —
+        # this chart's fonts are designed for that ~0.55x print shrink.
+        img = _b64_to_image(analysis.rob_plot_b64, 16.5)
         if img:
             story.append(img)
             story.append(_para("Figure 2. Risk of bias summary (Cochrane RoB 2).", st["caption"]))

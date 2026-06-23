@@ -15,6 +15,7 @@ const SECTIONS = [
   { key: 'background', title: 'Antecedentes (Background)' },
   { key: 'objectives', title: 'Objetivos (Objectives)' },
   { key: 'methods', title: 'Métodos (Methods)' },
+  { key: 'risk_of_bias', title: 'Riesgo de Sesgo en los Estudios Incluidos (Risk of Bias)' },
   { key: 'results', title: 'Resultados (Results)' },
   { key: 'discussion', title: 'Discusión (Discussion)' },
 ]
@@ -24,6 +25,7 @@ const SECTION_FIELD: Record<string, keyof Review> = {
   background: 'background_text',
   objectives: 'objectives',
   methods: 'methods_text',
+  risk_of_bias: 'risk_of_bias_results',
   results: 'results_text',
   discussion: 'discussion',
 }

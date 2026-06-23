@@ -10,7 +10,7 @@ from ..services.statistics import run_meta_analysis, result_to_dict, meta_result
 from ..services.plots import generate_forest_plot, generate_funnel_plot, generate_rob_traffic_light, generate_prisma_2020, generate_grade_table  # used by on-demand endpoints
 from ..services.ai_generator import (
     generate_prisma_autofill, screen_studies_with_ai, extract_quantitative_data,
-    interpret_forest_plot, interpret_funnel_plot, interpret_grade_table,
+    interpret_forest_plot, interpret_funnel_plot, interpret_grade_table, interpret_rob_plot,
 )
 
 router = APIRouter(prefix="/reviews/{review_id}/analysis", tags=["analysis"])
@@ -196,6 +196,40 @@ def get_grade_table(review_id: int, db: Session = Depends(get_db)):
         pass
 
     return {"grade_b64": b64, "interpretation": interpretation}
+
+
+@router.get("/rob")
+def get_rob_plot(review_id: int, db: Session = Depends(get_db)):
+    """Generate the Cochrane RoB 2 risk-of-bias traffic-light plot + AI interpretation.
+
+    Unlike forest/funnel/grade, this doesn't depend on the meta-analysis
+    result — only on each study's rob_* domain ratings — but it's still
+    stored on the latest Analysis row (where rob_plot_b64 lives) so it
+    persists for the PDF export the same way the other plots do.
+    """
+    review = db.query(Review).filter(Review.id == review_id).first()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+    analysis = _get_latest_or_404(review_id, db)
+    studies = _study_dicts(review_id, db)
+    if not studies:
+        raise HTTPException(status_code=422, detail="No hay estudios incluidos con datos de riesgo de sesgo.")
+
+    try:
+        b64 = generate_rob_traffic_light(studies)
+        analysis.rob_plot_b64 = b64
+        db.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error generando el gráfico de riesgo de sesgo: {exc}")
+
+    interpretation = ""
+    try:
+        review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
+        interpretation = interpret_rob_plot(review_dict, studies)
+    except Exception:
+        pass
+
+    return {"rob_b64": b64, "interpretation": interpretation}
 
 
 @router.get("/prisma")

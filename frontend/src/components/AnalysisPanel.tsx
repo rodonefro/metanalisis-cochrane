@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { BarChart2, ChevronDown, ChevronUp, Play, Wand2, Download, Filter, Table, Zap, CheckCircle2, Loader2 } from 'lucide-react'
+import { BarChart2, ChevronDown, ChevronUp, Play, Wand2, Download, Filter, Table, Zap, CheckCircle2, Loader2, ShieldAlert } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { runAnalysis, getLatestAnalysis, generateSection, getForestPlot, getFunnelPlot, getGradeTable, aiScreenStudies, aiExtractData, autofillPrisma } from '../services/api'
+import { runAnalysis, getLatestAnalysis, generateSection, getForestPlot, getFunnelPlot, getGradeTable, getRobPlot, aiScreenStudies, aiExtractData, autofillPrisma } from '../services/api'
 import type { Analysis } from '../services/api'
 
 interface Props {
@@ -105,12 +105,15 @@ export default function AnalysisPanel({ reviewId }: Props) {
   const [forestB64, setForestB64] = useState<string | null>(null)
   const [funnelB64, setFunnelB64] = useState<string | null>(null)
   const [gradeB64, setGradeB64] = useState<string | null>(null)
+  const [robB64, setRobB64] = useState<string | null>(null)
   const [forestInterp, setForestInterp] = useState<string>('')
   const [funnelInterp, setFunnelInterp] = useState<string>('')
   const [gradeInterp, setGradeInterp] = useState<string>('')
+  const [robInterp, setRobInterp] = useState<string>('')
   const [loadingForest, setLoadingForest] = useState(false)
   const [loadingFunnel, setLoadingFunnel] = useState(false)
   const [loadingGrade, setLoadingGrade] = useState(false)
+  const [loadingRob, setLoadingRob] = useState(false)
   // Pipeline IA Completo
   const [pipelineRunning, setPipelineRunning] = useState(false)
   const [pipelineStep, setPipelineStep] = useState<string | null>(null)
@@ -129,6 +132,7 @@ export default function AnalysisPanel({ reviewId }: Props) {
   useEffect(() => {
     if (analysis?.forest_plot_b64) setForestB64(analysis.forest_plot_b64)
     if (analysis?.funnel_plot_b64) setFunnelB64(analysis.funnel_plot_b64)
+    if (analysis?.rob_plot_b64) setRobB64(analysis.rob_plot_b64)
   }, [analysis])
 
   const runMutation = useMutation({
@@ -184,6 +188,20 @@ export default function AnalysisPanel({ reviewId }: Props) {
     }
   }
 
+  const handleRob = async () => {
+    setLoadingRob(true)
+    try {
+      const res = await getRobPlot(reviewId)
+      setRobB64(res.rob_b64)
+      if (res.interpretation) setRobInterp(res.interpretation)
+      toast.success('Gráfico de riesgo de sesgo generado')
+    } catch (e: any) {
+      toast.error(e.response?.data?.detail || 'Ejecuta primero el meta-análisis y completa el RoB 2 de los estudios')
+    } finally {
+      setLoadingRob(false)
+    }
+  }
+
   const PIPELINE_STEPS = [
     { id: 'screening',  label: 'Cribado IA' },
     { id: 'prisma',     label: 'PRISMA' },
@@ -220,11 +238,12 @@ export default function AnalysisPanel({ reviewId }: Props) {
 
       setPipelineStep('plots')
       toast.loading('Paso 5/5 — Generando gráficas con interpretación IA...', { id: 'pipeline' })
-      setLoadingForest(true); setLoadingFunnel(true); setLoadingGrade(true)
-      const [forestRes, funnelRes, gradeRes] = await Promise.all([
+      setLoadingForest(true); setLoadingFunnel(true); setLoadingGrade(true); setLoadingRob(true)
+      const [forestRes, funnelRes, gradeRes, robRes] = await Promise.all([
         getForestPlot(reviewId),
         getFunnelPlot(reviewId),
         getGradeTable(reviewId),
+        getRobPlot(reviewId),
       ])
       setForestB64(forestRes.forest_b64)
       if (forestRes.interpretation) setForestInterp(forestRes.interpretation)
@@ -232,6 +251,8 @@ export default function AnalysisPanel({ reviewId }: Props) {
       if (funnelRes.interpretation) setFunnelInterp(funnelRes.interpretation)
       setGradeB64(gradeRes.grade_b64)
       if (gradeRes.interpretation) setGradeInterp(gradeRes.interpretation)
+      setRobB64(robRes.rob_b64)
+      if (robRes.interpretation) setRobInterp(robRes.interpretation)
 
       toast.success('¡Pipeline IA completo! Análisis y gráficas listos.', { id: 'pipeline', duration: 5000 })
     } catch (e: any) {
@@ -239,7 +260,7 @@ export default function AnalysisPanel({ reviewId }: Props) {
     } finally {
       setPipelineRunning(false)
       setPipelineStep(null)
-      setLoadingForest(false); setLoadingFunnel(false); setLoadingGrade(false)
+      setLoadingForest(false); setLoadingFunnel(false); setLoadingGrade(false); setLoadingRob(false)
     }
   }
 
@@ -293,7 +314,7 @@ export default function AnalysisPanel({ reviewId }: Props) {
                 </div>
                 <p className="text-xs text-gray-600">
                   Ejecuta en secuencia: <strong>Cribado IA</strong> (usa criterios de inclusión/exclusión)
-                  → <strong>Extracción de datos</strong> → <strong>Meta-análisis</strong> → <strong>3 gráficas con interpretación IA</strong>
+                  → <strong>Extracción de datos</strong> → <strong>Meta-análisis</strong> → <strong>4 gráficas con interpretación IA</strong>
                 </p>
               </div>
               <button
@@ -442,6 +463,17 @@ export default function AnalysisPanel({ reviewId }: Props) {
                 loading={loadingGrade || pipelineRunning}
                 interpretation={gradeInterp}
                 onGenerate={handleGrade}
+              />
+
+              <PlotCard
+                title="Riesgo de Sesgo (Cochrane RoB 2)"
+                subtitle="Semáforo de riesgo de sesgo por dominio y por estudio"
+                icon={ShieldAlert}
+                iconColor="text-amber-500"
+                b64={robB64}
+                loading={loadingRob || pipelineRunning}
+                interpretation={robInterp}
+                onGenerate={handleRob}
               />
             </div>
           </div>

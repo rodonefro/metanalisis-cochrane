@@ -543,59 +543,93 @@ def generate_prisma_2020(
 
 
 def generate_rob_traffic_light(studies_rob: list) -> str:
-    """Generate a Risk of Bias traffic-light summary figure."""
+    """Generate a Cochrane RoB 2 risk-of-bias traffic-light summary figure.
+
+    Same print-legibility rationale as the forest plot / GRADE table: this
+    PNG is embedded in the PDF well under its design width, so fonts are
+    sized for that ~0.55x shrink rather than for an on-screen preview.
+    """
     domains = [
-        "Random sequence", "Allocation concealment", "Blinding (participants)",
-        "Blinding (outcomes)", "Incomplete data", "Selective reporting", "Other"
+        "Secuencia\naleatoria", "Ocultamiento\nde asignación", "Cegamiento\nparticipantes",
+        "Cegamiento\nevaluación", "Datos\nincompletos", "Notificación\nselectiva", "Otros\nsesgos",
     ]
     keys = [
         "rob_random_sequence", "rob_allocation_concealment",
         "rob_blinding_participants", "rob_blinding_outcome",
         "rob_incomplete_data", "rob_selective_reporting", "rob_other",
     ]
-    color_map = {
-        "low": "#2ecc71", "some_concerns": "#f39c12",
-        "high": "#e74c3c", None: "#bdc3c7", "": "#bdc3c7",
-    }
+    GREEN, AMBER, RED, GREY = "#1E8449", "#C2840C", "#C0392B", "#9AA5B1"
+    color_map = {"low": GREEN, "some_concerns": AMBER, "high": RED, None: GREY, "": GREY}
     symbol_map = {"low": "+", "some_concerns": "?", "high": "−", None: "?", "": "?"}
 
     n_studies = len(studies_rob)
     n_domains = len(domains)
-    fig, ax = plt.subplots(figsize=(n_domains * 1.4 + 2, n_studies * 0.55 + 2))
-    ax.axis("off")
 
-    # Headers
+    F_LABEL, F_DOMAIN, F_SYMBOL, F_LEGEND, F_TITLE = 15, 13.5, 15, 13.5, 19
+
+    def _label(study: dict) -> str:
+        return study.get("study_label") or f"{study.get('authors', '?')} {study.get('year', '')}"
+
+    # ── Measure first: a fixed inches-per-data-unit scale (COL_W_IN) keeps
+    # the circles a consistent physical size regardless of label length —
+    # computing the figure width FROM the label requirement (rather than
+    # guessing both independently) avoids the data-range/figure-size mismatch
+    # that would otherwise squash or oversize the grid.
+    COL_W_IN = 1.35
+    ROW_H_IN = 0.62
+    max_label_chars = max((len(_label(s)) for s in studies_rob), default=10)
+    label_in = max_label_chars * F_LABEL * 0.52 / 72 + 0.35
+    label_units = label_in / COL_W_IN
+
+    x_lo, x_hi = -label_units, n_domains + 0.5
+    y_lo, y_hi = -1.35, n_studies + 2.5  # extra headroom for the rotated 2-line domain headers
+
+    fig_w = COL_W_IN * (x_hi - x_lo)
+    fig_h = ROW_H_IN * (y_hi - y_lo)
+    fig, ax = plt.subplots(figsize=(fig_w, fig_h))
+    ax.axis("off")
+    fig.subplots_adjust(left=0, right=1, top=1, bottom=0)
+    ax.set_xlim(x_lo, x_hi)
+    ax.set_ylim(y_lo, y_hi)
+
+    # Headers (rotated, ample row reserved above the grid)
     for j, domain in enumerate(domains):
-        ax.text(j + 1, n_studies + 0.5, domain, ha="center", va="bottom",
-                fontsize=7.5, fontweight="bold", rotation=45)
+        ax.text(j + 1, n_studies + 0.55, domain, ha="center", va="bottom",
+                fontsize=F_DOMAIN, fontweight="bold", color="#1B2A4A",
+                rotation=40, linespacing=1.15)
+
+    # plt.Circle's radius is in data units, but the x- and y-axes here use
+    # different inches-per-unit scales (COL_W_IN vs ROW_H_IN) — a "circle"
+    # sized in data units would render as an oval. mpatches.Ellipse with
+    # independently scaled width/height compensates so it reads as a true
+    # circle on the printed page.
+    MARKER_R_IN = 0.27
+    marker_w = 2 * MARKER_R_IN / COL_W_IN
+    marker_h = 2 * MARKER_R_IN / ROW_H_IN
 
     for i, study in enumerate(studies_rob):
-        label = f"{study.get('authors', '?')} {study.get('year', '')}"
-        ax.text(0, n_studies - i, label, ha="right", va="center", fontsize=8)
+        ax.text(-0.15, n_studies - i, _label(study), ha="right", va="center", fontsize=F_LABEL)
         for j, key in enumerate(keys):
             val = study.get(key, None)
-            color = color_map.get(val, "#bdc3c7")
+            color = color_map.get(val, GREY)
             symbol = symbol_map.get(val, "?")
-            circle = plt.Circle((j + 1, n_studies - i), 0.3,
-                                 color=color, zorder=2)
-            ax.add_patch(circle)
+            marker = mpatches.Ellipse((j + 1, n_studies - i), marker_w, marker_h,
+                                       facecolor=color, edgecolor="#33414f", linewidth=0.8, zorder=2)
+            ax.add_patch(marker)
             ax.text(j + 1, n_studies - i, symbol, ha="center", va="center",
-                    fontsize=9, fontweight="bold", color="white", zorder=3)
-
-    ax.set_xlim(-0.5, n_domains + 0.5)
-    ax.set_ylim(0, n_studies + 1.5)
+                    fontsize=F_SYMBOL, fontweight="bold", color="white", zorder=3)
 
     # Legend
     legend_elements = [
-        mpatches.Patch(color="#2ecc71", label="Low risk"),
-        mpatches.Patch(color="#f39c12", label="Some concerns"),
-        mpatches.Patch(color="#e74c3c", label="High risk"),
+        mpatches.Patch(facecolor=GREEN, edgecolor="#33414f", label="Bajo riesgo"),
+        mpatches.Patch(facecolor=AMBER, edgecolor="#33414f", label="Algunas preocupaciones"),
+        mpatches.Patch(facecolor=RED, edgecolor="#33414f", label="Alto riesgo"),
     ]
-    ax.legend(handles=legend_elements, loc="lower right", fontsize=8)
-    ax.set_title("Risk of Bias Assessment (Cochrane RoB 2)", fontsize=11,
-                 fontweight="bold", pad=10)
-    plt.tight_layout()
-    return _b64(fig)
+    ax.legend(handles=legend_elements, loc="lower center",
+              bbox_to_anchor=(0.5, 0.0), ncol=3, fontsize=F_LEGEND, frameon=False)
+    ax.set_title("Evaluación del Riesgo de Sesgo (Cochrane RoB 2)", fontsize=F_TITLE,
+                 fontweight="bold", color="#1B2A4A", pad=14)
+    return _b64(fig, dpi=130)
 
 
 def generate_grade_table(result_dict: dict, studies: list, outcome: str = "") -> str:
