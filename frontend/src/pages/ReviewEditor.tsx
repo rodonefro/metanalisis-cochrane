@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { ArrowLeft, Download, Save, CheckCircle2, Loader2 } from 'lucide-react'
-import { getReview, updateReview, generateSection, exportPdf, type Review } from '../services/api'
+import { getReview, updateReview, generateSection, exportPdf, exportDocx, type Review } from '../services/api'
 import SectionEditor from '../components/SectionEditor'
 import StudiesTable from '../components/StudiesTable'
 import AnalysisPanel from '../components/AnalysisPanel'
@@ -139,7 +139,23 @@ export default function ReviewEditor() {
       a.click()
       URL.revokeObjectURL(url)
     } catch {
-      toast.error('PDF export failed')
+      toast.error('Error al exportar PDF')
+    }
+  }
+
+  const handleExportDocx = async () => {
+    try {
+      toast.loading('Generando Word...', { id: 'docx' })
+      const blob = await exportDocx(reviewId)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `${review?.title?.replace(/\s+/g, '_') || 'review'}.docx`
+      a.click()
+      URL.revokeObjectURL(url)
+      toast.success('Documento Word descargado', { id: 'docx' })
+    } catch {
+      toast.error('Error al exportar Word', { id: 'docx' })
     }
   }
 
@@ -195,6 +211,9 @@ export default function ReviewEditor() {
           </button>
           <button onClick={handleExportPdf} className="btn-secondary">
             <Download size={16} /> Exportar PDF
+          </button>
+          <button onClick={handleExportDocx} className="btn-secondary">
+            <Download size={16} /> Exportar Word
           </button>
         </div>
       </div>

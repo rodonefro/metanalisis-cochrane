@@ -749,3 +749,389 @@ def export_pdf(review_id: int, db: Session = Depends(get_db)):
         media_type="application/pdf",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ── Word DOCX export ─────────────────────────────────────────────────────────
+
+def _docx_add_heading(doc_obj, text: str, level: int, color_hex: str = "005A9C"):
+    from docx.shared import Pt, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    h = doc_obj.add_heading(text, level=level)
+    h.alignment = WD_ALIGN_PARAGRAPH.LEFT
+    for run in h.runs:
+        run.font.color.rgb = RGBColor(
+            int(color_hex[0:2], 16),
+            int(color_hex[2:4], 16),
+            int(color_hex[4:6], 16),
+        )
+        run.font.size = Pt({1: 16, 2: 13, 3: 11}.get(level, 11))
+    return h
+
+
+def _docx_add_body(doc_obj, text: str, italic: bool = False, size_pt: int = 10):
+    from docx.shared import Pt
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    if not text:
+        return
+    p = doc_obj.add_paragraph(text)
+    p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+    for run in p.runs:
+        run.italic = italic
+        run.font.size = Pt(size_pt)
+
+
+def _docx_embed_b64_image(doc_obj, b64: str, width_cm: float, caption: str):
+    """Decode a base64 PNG, write to temp buffer and embed in document."""
+    import tempfile, os
+    from docx.shared import Cm
+    try:
+        data = base64.b64decode(b64)
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            tmp.write(data)
+            tmp_path = tmp.name
+        doc_obj.add_picture(tmp_path, width=Cm(width_cm))
+        os.unlink(tmp_path)
+        if caption:
+            cap = doc_obj.add_paragraph(caption)
+            cap.style = "Caption" if "Caption" in [s.name for s in doc_obj.styles] else cap.style
+            from docx.shared import Pt
+            from docx.enum.text import WD_ALIGN_PARAGRAPH
+            cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            for run in cap.runs:
+                run.font.size = Pt(8)
+    except Exception:
+        doc_obj.add_paragraph(f"[{caption} — no disponible]")
+
+
+def _docx_study_table(doc_obj, studies: list):
+    """Add one 2-column card per study: field labels + values stacked vertically."""
+    from docx.shared import Pt, RGBColor, Cm
+    from docx.oxml.ns import qn
+    from docx.oxml import OxmlElement
+
+    FIELD_LABELS = ["Autores", "Año", "Tipo de estudio", "Participantes (N)",
+                    "Intervención", "Resultados", "Riesgo de sesgo"]
+    ROB_ES = {"low": "Bajo", "some_concerns": "Algunas preocupaciones", "high": "Alto"}
+
+    for i, s in enumerate(studies, 1):
+        authors = getattr(s, "authors", None) or "—"
+        year    = str(getattr(s, "year", None) or "—")
+        label   = getattr(s, "study_label", None) or f"{authors} ({year})"
+        n_int   = getattr(s, "total_intervention", None) or 0
+        n_ctrl  = getattr(s, "total_control", None) or 0
+        n       = str((n_int + n_ctrl) or getattr(s, "sample_size", None) or "—")
+        design  = getattr(s, "study_design", None) or "—"
+        interv  = getattr(s, "group_comparison", None) or getattr(s, "patient_population", None) or "—"
+        outc    = (getattr(s, "survival_outcomes", None) or getattr(s, "key_findings", None)
+                   or getattr(s, "study_results", None) or getattr(s, "findings", None) or "—")
+        rob_raw = getattr(s, "rob_overall", None)
+        rob_txt = ROB_ES.get(rob_raw, "—" if not rob_raw else rob_raw)
+
+        values = [authors, year, design, n, interv, outc, rob_txt]
+
+        tbl = doc_obj.add_table(rows=1 + len(FIELD_LABELS), cols=2)
+        tbl.style = "Table Grid"
+
+        # Title row spanning 2 cols
+        title_row = tbl.rows[0]
+        title_row.cells[0].merge(title_row.cells[1])
+        cell = title_row.cells[0]
+        cell.text = f"{i}. {label[:120]}"
+        for run in cell.paragraphs[0].runs:
+            run.bold = True
+            run.font.size = Pt(10)
+            run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
+        # Blue background for title cell
+        tc_pr = cell._tc.get_or_add_tcPr()
+        shd = OxmlElement("w:shd")
+        shd.set(qn("w:val"), "clear")
+        shd.set(qn("w:color"), "auto")
+        shd.set(qn("w:fill"), "005A9C")
+        tc_pr.append(shd)
+
+        # Field rows
+        for row_idx, (lbl, val) in enumerate(zip(FIELD_LABELS, values), 1):
+            row = tbl.rows[row_idx]
+            # Label cell (light blue shading)
+            lbl_cell = row.cells[0]
+            lbl_cell.text = lbl
+            lbl_cell.width = Cm(3.8)
+            for run in lbl_cell.paragraphs[0].runs:
+                run.bold = True
+                run.font.size = Pt(8.5)
+            tc_pr2 = lbl_cell._tc.get_or_add_tcPr()
+            shd2 = OxmlElement("w:shd")
+            shd2.set(qn("w:val"), "clear")
+            shd2.set(qn("w:color"), "auto")
+            shd2.set(qn("w:fill"), "E8F1F8")
+            tc_pr2.append(shd2)
+            # Value cell
+            val_cell = row.cells[1]
+            val_cell.text = val
+            val_cell.width = Cm(13.2)
+            for run in val_cell.paragraphs[0].runs:
+                run.font.size = Pt(8.5)
+
+        doc_obj.add_paragraph()
+
+
+@router.get("/docx")
+def export_docx(review_id: int, db: Session = Depends(get_db)):
+    """Export the review as an editable Word (.docx) document."""
+    try:
+        from docx import Document
+        from docx.shared import Pt, Cm, RGBColor
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        from docx.oxml.ns import qn
+        from docx.oxml import OxmlElement
+    except ImportError:
+        raise HTTPException(status_code=500,
+                            detail="python-docx no instalado. Ejecuta: pip install python-docx")
+
+    review = db.query(Review).filter(Review.id == review_id).first()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+
+    studies = db.query(Study).filter(Study.review_id == review_id,
+                                     Study.included == True).all()  # noqa: E712
+    analysis = (
+        db.query(Analysis)
+        .filter(Analysis.review_id == review_id)
+        .order_by(Analysis.created_at.desc())
+        .first()
+    )
+
+    d = Document()
+
+    # ── Page margins ────────────────────────────────────────────────────────
+    for section in d.sections:
+        section.top_margin    = Cm(2.5)
+        section.bottom_margin = Cm(2.5)
+        section.left_margin   = Cm(3)
+        section.right_margin  = Cm(2.5)
+
+    # ── Cover ───────────────────────────────────────────────────────────────
+    cover_title = d.add_paragraph(review.title or "Revisión Sistemática y Metaanálisis")
+    cover_title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    for run in cover_title.runs:
+        run.bold = True
+        run.font.size = Pt(20)
+        run.font.color.rgb = RGBColor(0x00, 0x5A, 0x9C)
+
+    d.add_paragraph(f"Registro: {review.prospero_id or 'No registrado'} · "
+                    f"Estudios incluidos: {len(studies)} · "
+                    f"Fecha: {datetime.utcnow().strftime('%d/%m/%Y')}").alignment = WD_ALIGN_PARAGRAPH.CENTER
+    d.add_page_break()
+
+    # ── Abstract ────────────────────────────────────────────────────────────
+    _docx_add_heading(d, "Resumen (Abstract)", 1)
+    _docx_add_body(d, review.abstract or "[Pendiente de generar — usa la sección IA]")
+    d.add_page_break()
+
+    # ── 1. Background ───────────────────────────────────────────────────────
+    _docx_add_heading(d, "1. Antecedentes (Background)", 1)
+    text = (review.background_text
+            or "\n".join(filter(None, [review.background_condition,
+                                        review.background_intervention,
+                                        review.background_mechanism,
+                                        review.background_importance])))
+    _docx_add_body(d, text or "[Pendiente de generar]")
+
+    # ── PICO ────────────────────────────────────────────────────────────────
+    _docx_add_heading(d, "Marco PICO", 2)
+    pico_tbl = d.add_table(rows=4, cols=2)
+    pico_tbl.style = "Table Grid"
+    for row, (lbl, val) in zip(pico_tbl.rows, [
+        ("P – Población",        review.population),
+        ("I – Intervención",     review.intervention),
+        ("C – Comparador",       review.comparison),
+        ("O – Desenlaces",       review.outcomes),
+    ]):
+        row.cells[0].text = lbl
+        row.cells[1].text = val or "—"
+        row.cells[0].width = Cm(4)
+        row.cells[1].width = Cm(13)
+        for run in row.cells[0].paragraphs[0].runs:
+            run.bold = True
+            run.font.size = Pt(9)
+        for run in row.cells[1].paragraphs[0].runs:
+            run.font.size = Pt(9)
+
+    # ── 2. Objectives ───────────────────────────────────────────────────────
+    _docx_add_heading(d, "2. Objetivos (Objectives)", 1)
+    _docx_add_body(d, review.objectives or "[Pendiente de generar]")
+
+    # ── 3. Methods ──────────────────────────────────────────────────────────
+    _docx_add_heading(d, "3. Métodos (Methods)", 1)
+    _docx_add_body(d, review.methods_text or "")
+
+    if not review.methods_text:
+        for num, title, val in [
+            ("3.1", "Criterios de inclusión",            review.inclusion_criteria),
+            ("3.2", "Estrategia de búsqueda",            review.search_strategy),
+            ("3.3", "Selección de estudios",             review.study_selection_method),
+            ("3.4", "Extracción de datos",               review.data_extraction_method),
+            ("3.5", "Evaluación de riesgo de sesgo",     review.risk_of_bias_method),
+            ("3.6", "Medidas del efecto",                f"Medida de efecto: {review.effect_measure or 'OR'}"),
+            ("3.7", "Evaluación de heterogeneidad",      review.heterogeneity_method),
+        ]:
+            _docx_add_heading(d, f"{num}  {title}", 2)
+            _docx_add_body(d, val or "[Pendiente]", size_pt=9)
+
+    # ── 4. Results ──────────────────────────────────────────────────────────
+    d.add_page_break()
+    _docx_add_heading(d, "4. Resultados (Results)", 1)
+    _docx_add_heading(d, "4.1  Descripción de los estudios", 2)
+    _docx_add_heading(d, "4.1.1  Resultados de la búsqueda", 3)
+    _docx_add_body(d, review.description_of_studies
+                   or (f"Se incluyeron {len(studies)} estudios en esta revisión." if studies else "[Pendiente]"))
+
+    # PRISMA diagram
+    has_prisma = any([review.prisma_db_names, review.prisma_screened,
+                      review.prisma_assessed, review.prisma_included])
+    if has_prisma:
+        try:
+            prisma_b64 = generate_prisma_2020(
+                db_names=review.prisma_db_names,
+                other_sources=review.prisma_other_sources,
+                duplicates_removed=review.prisma_duplicates_removed,
+                other_removed=review.prisma_other_removed,
+                screened=review.prisma_screened,
+                excluded_screening=review.prisma_excluded_screening,
+                sought=review.prisma_sought,
+                not_retrieved=review.prisma_not_retrieved,
+                assessed=review.prisma_assessed,
+                excluded_eligibility=review.prisma_excluded_eligibility,
+                exclusion_reasons=review.prisma_exclusion_reasons,
+                included=review.prisma_included,
+                reports_included=review.prisma_reports_included,
+            )
+            _docx_embed_b64_image(d, prisma_b64, 14, "Figura 1. Diagrama de flujo PRISMA 2020.")
+        except Exception:
+            pass
+
+    # Study characteristics table
+    _docx_add_heading(d, "4.1.2  Estudios incluidos", 3)
+    _docx_add_body(d, "Tabla 1. Características de los estudios incluidos", italic=True, size_pt=9)
+    if studies:
+        _docx_study_table(d, studies)
+    else:
+        _docx_add_body(d, "[Sin estudios incluidos]")
+
+    _docx_add_heading(d, "4.1.3  Riesgo de sesgo en los estudios incluidos", 3)
+    _docx_add_body(d, review.risk_of_bias_results or "[Pendiente de generar]")
+
+    _docx_add_heading(d, "4.2  Efectos de las intervenciones", 2)
+    _docx_add_body(d, review.intervention_effects or review.results_text or "[Pendiente de generar]")
+
+    # Statistical summary
+    if analysis and analysis.results_json:
+        try:
+            res = json.loads(analysis.results_json)
+            p   = res.get("pooled", {}) or {}
+            h   = res.get("heterogeneity", {}) or {}
+            em  = res.get("effect_measure", review.effect_measure or "OR")
+            eff, lo, hi = p.get("effect"), p.get("ci_lower"), p.get("ci_upper")
+            pi  = res.get("prediction_interval", {}) or {}
+
+            _docx_add_heading(d, "Tabla 2. Resumen de resultados del metaanálisis", 3)
+            stat_tbl = d.add_table(rows=10, cols=2)
+            stat_tbl.style = "Table Grid"
+            rows_data = [
+                ("Medida de efecto", em),
+                ("Estudios (k)",      str(res.get("k", "—"))),
+                ("Participantes (N)", str(res.get("total_n", "—"))),
+                ("Efecto combinado (IC 95%)",
+                 f"{eff:.3f} [{lo:.3f}, {hi:.3f}]" if eff is not None else "—"),
+                ("Intervalo de predicción",
+                 f"[{pi.get('lower'):.3f}, {pi.get('upper'):.3f}]"
+                 if pi.get("lower") is not None else "—"),
+                ("I²",               f"{h.get('I2', 0):.1f}%"),
+                ("τ²",               f"{h.get('tau2', 0):.4f}"),
+                ("Q (valor p)",      f"{h.get('Q', 0):.2f} (p={h.get('Q_pvalue', 0):.3f})"),
+                ("Modelo",           f"{res.get('model', 'random')}-effects"),
+                ("Fecha del análisis", datetime.utcnow().strftime("%d/%m/%Y")),
+            ]
+            for row, (k, v) in zip(stat_tbl.rows, rows_data):
+                row.cells[0].text = k
+                row.cells[1].text = v
+                row.cells[0].width = Cm(6)
+                row.cells[1].width = Cm(11)
+                for run in row.cells[0].paragraphs[0].runs:
+                    run.bold = True
+                    run.font.size = Pt(9)
+                for run in row.cells[1].paragraphs[0].runs:
+                    run.font.size = Pt(9)
+        except Exception:
+            pass
+
+    # Forest plot
+    if analysis and analysis.forest_plot_b64:
+        d.add_paragraph()
+        _docx_embed_b64_image(d, analysis.forest_plot_b64, 16,
+                               "Figura 2. Forest plot — estimación del efecto combinado.")
+
+    # Funnel plot
+    if analysis and analysis.funnel_plot_b64:
+        _docx_embed_b64_image(d, analysis.funnel_plot_b64, 10,
+                               "Figura 3. Funnel plot — evaluación del sesgo de publicación.")
+
+    # ── 5. Discussion ───────────────────────────────────────────────────────
+    d.add_page_break()
+    _docx_add_heading(d, "5. Discusión (Discussion)", 1)
+    _docx_add_body(d, review.discussion or "[Pendiente de generar]")
+
+    # ── 6. Conclusions ──────────────────────────────────────────────────────
+    _docx_add_heading(d, "6. Conclusiones de los autores (Authors' Conclusions)", 1)
+    _docx_add_body(d, review.authors_conclusions or "[Pendiente de generar]")
+
+    # ── References ──────────────────────────────────────────────────────────
+    d.add_page_break()
+    _docx_add_heading(d, "Referencias (References)", 1)
+    if review.references:
+        _docx_add_body(d, review.references, size_pt=9)
+    elif studies:
+        for i, s in enumerate(studies, 1):
+            authors_ = s.authors or "Autores desconocidos"
+            year_    = s.year or "s.f."
+            title_   = s.title or s.study_label or "Sin título"
+            journal_ = s.journal or ""
+            doi_     = s.doi or ""
+            ref_line = f"{i}. {authors_} ({year_}). {title_}."
+            if journal_:
+                ref_line += f" {journal_}."
+            if doi_:
+                ref_line += f" doi:{doi_}"
+            _docx_add_body(d, ref_line, size_pt=9)
+
+    # ── Appendix 1: GRADE ───────────────────────────────────────────────────
+    d.add_page_break()
+    _docx_add_heading(d, "Apéndice 1. Perfil de evidencia GRADE", 1)
+    if analysis and analysis.results_json:
+        try:
+            result_dict = json.loads(analysis.results_json)
+            study_dicts = [{c.name: getattr(s, c.name) for c in s.__table__.columns} for s in studies]
+            grade_b64 = generate_grade_table(result_dict, study_dicts, outcome=review.title or "")
+            _docx_embed_b64_image(d, grade_b64, 16,
+                                   "Tabla A1. Perfil de evidencia GRADE — certeza de la evidencia.")
+        except Exception:
+            _docx_add_body(d, "[Tabla GRADE no disponible — ejecuta el metaanálisis primero]", italic=True)
+    else:
+        _docx_add_body(d, "[Ejecuta el metaanálisis para generar el perfil GRADE]", italic=True)
+
+    # ── Appendix 2: Search strategy ─────────────────────────────────────────
+    _docx_add_heading(d, "Apéndice 2. Estrategias de búsqueda", 1)
+    _docx_add_body(d, review.search_strategy or "[Estrategia de búsqueda no documentada]", size_pt=9)
+
+    # ── Stream out ──────────────────────────────────────────────────────────
+    buf = io.BytesIO()
+    d.save(buf)
+    buf.seek(0)
+
+    safe_title = (review.title or "revision").replace(" ", "_")[:60]
+    filename = f"Cochrane_Review_{safe_title}_{datetime.utcnow().strftime('%Y%m%d')}.docx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )

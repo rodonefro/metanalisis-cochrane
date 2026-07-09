@@ -222,4 +222,7 @@ export const aiExtractData = (reviewId: number) =>
 export const exportPdf = (reviewId: number) =>
   api.get(`/reviews/${reviewId}/export/pdf`, { responseType: 'blob' }).then(r => r.data)
 
+export const exportDocx = (reviewId: number) =>
+  api.get(`/reviews/${reviewId}/export/docx`, { responseType: 'blob' }).then(r => r.data)
+
 export default api
