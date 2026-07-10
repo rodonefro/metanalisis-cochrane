@@ -16,6 +16,7 @@ _SECTION_FIELD = {
     "methods": "methods_text",
     "results": "results_text",
     "discussion": "discussion",
+    "risk_of_bias": "risk_of_bias_results",
     "references": "references",
     "plot_interpretation": "plot_interpretation",
 }
