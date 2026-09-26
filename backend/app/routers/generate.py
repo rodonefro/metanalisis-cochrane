@@ -43,10 +43,12 @@ def generate_text(
     review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
 
     studies = db.query(Study).filter(Study.review_id == review_id).all()
-    studies_list = [
+    all_studies = [
         {c.name: getattr(s, c.name) for c in s.__table__.columns}
         for s in studies
     ]
+    studies_list = [s for s in all_studies if s["included"]]
+    excluded_list = [s for s in all_studies if not s["included"]]
 
     # Load latest meta-analysis results
     meta_results = None
@@ -74,7 +76,7 @@ def generate_text(
 
     try:
         text = generate_section(
-            section_key, review_dict, studies_list, meta_results, citation_style
+            section_key, review_dict, studies_list, meta_results, citation_style, excluded_list
         )
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Error en generación IA: {exc}")

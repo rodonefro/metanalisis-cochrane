@@ -214,7 +214,9 @@ export const getPrismaDiagram = (reviewId: number) =>
 export const autofillPrisma = (reviewId: number) =>
   api.post<{ message: string; data: Record<string, unknown> }>(`/reviews/${reviewId}/analysis/prisma/autofill`).then(r => r.data)
 export const aiScreenStudies = (reviewId: number) =>
-  api.post<{ message: string; included: number; excluded: number; skipped_already_reviewed: number }>(`/reviews/${reviewId}/analysis/ai-screen`).then(r => r.data)
+  api.post<{ message: string; included: number; excluded: number; uncertain: number; skipped_already_reviewed: number }>(`/reviews/${reviewId}/analysis/ai-screen`).then(r => r.data)
+export const resetScreening = (reviewId: number) =>
+  api.post<{ message: string; reset: number }>(`/reviews/${reviewId}/analysis/reset-screening`).then(r => r.data)
 export const aiExtractData = (reviewId: number) =>
   api.post<{ message: string; updated: number; total_included: number }>(`/reviews/${reviewId}/analysis/ai-extract`).then(r => r.data)
 

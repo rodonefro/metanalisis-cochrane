@@ -9,7 +9,7 @@ from ..schemas import AnalysisOut
 from ..services.statistics import run_meta_analysis, result_to_dict, meta_result_from_dict
 from ..services.plots import generate_forest_plot, generate_funnel_plot, generate_rob_traffic_light, generate_prisma_2020, generate_grade_table  # used by on-demand endpoints
 from ..services.ai_generator import (
-    generate_prisma_autofill, screen_studies_with_ai, extract_quantitative_data,
+    generate_prisma_autofill, screen_studies_with_ai, extract_quantitative_data, eligibility_block,
     interpret_forest_plot, interpret_funnel_plot, interpret_grade_table, interpret_rob_plot,
 )
 
@@ -353,6 +353,15 @@ def ai_screen_studies(review_id: int, db: Session = Depends(get_db)):
         }
 
     review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
+    if not eligibility_block(review_dict).strip():
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "Define primero los criterios de elegibilidad de la revisión (PICO y/o criterios "
+                "de inclusión y exclusión) antes de ejecutar el cribado."
+            ),
+        )
+
     studies_list = [
         {c.name: getattr(s, c.name) for c in s.__table__.columns}
         for s in pending_studies
@@ -365,27 +374,65 @@ def ai_screen_studies(review_id: int, db: Session = Depends(get_db)):
 
     included_count = 0
     excluded_count = 0
+    uncertain_count = 0
     for study in pending_studies:
         decision = decisions.get(study.id)
         if decision is None:
             continue
-        study.included = decision["included"]
-        study.exclusion_reason = decision.get("reason") if not decision["included"] else None
-        study.screening_reviewed = True
-        if decision["included"]:
+        kind = decision["decision"]
+        if kind == "include":
+            study.included = True
+            study.exclusion_reason = None
             included_count += 1
-        else:
+        elif kind == "exclude":
+            study.included = False
+            study.exclusion_reason = f"{decision['criterion']}: {decision['reason']}"
             excluded_count += 1
+        else:
+            # Eligibility couldn't be verified from the available data: keep it out of the
+            # pooled analysis until the author checks the full text and includes it manually.
+            study.included = False
+            study.exclusion_reason = (
+                f"Requiere revisión a texto completo — {decision['criterion']}: {decision['reason']}"
+            )
+            uncertain_count += 1
+        study.screening_reviewed = True
 
     db.commit()
+    no_decision = len(pending_studies) - included_count - excluded_count - uncertain_count
     return {
         "message": (
-            f"Cribado completado: {included_count} incluidos, {excluded_count} excluidos "
-            f"({already_reviewed} ya tenían decisión previa y no se modificaron)"
+            f"Cribado completado: {included_count} incluidos, {excluded_count} excluidos, "
+            f"{uncertain_count} requieren revisión a texto completo"
+            + (f", {no_decision} sin decisión (quedan pendientes)" if no_decision else "")
+            + f" ({already_reviewed} ya tenían decisión previa y no se modificaron)"
         ),
         "included": included_count,
         "excluded": excluded_count,
+        "uncertain": uncertain_count,
         "skipped_already_reviewed": already_reviewed,
+    }
+
+
+@router.post("/reset-screening")
+def reset_screening(review_id: int, db: Session = Depends(get_db)):
+    """Clear every inclusion/exclusion decision so all studies are screened again."""
+    review = db.query(Review).filter(Review.id == review_id).first()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+
+    reset_count = (
+        db.query(Study)
+        .filter(Study.review_id == review_id)
+        .update(
+            {Study.included: True, Study.exclusion_reason: None, Study.screening_reviewed: False},
+            synchronize_session=False,
+        )
+    )
+    db.commit()
+    return {
+        "message": f"Cribado reiniciado: {reset_count} estudios quedaron pendientes de cribar.",
+        "reset": reset_count,
     }
 
 

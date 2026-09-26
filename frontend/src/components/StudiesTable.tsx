@@ -1,9 +1,9 @@
 import { useState, useRef } from 'react'
-import { Upload, Plus, Trash2, ChevronDown, ChevronUp, Database, Download, Merge, Wand2, CheckCircle2, XCircle, Lock } from 'lucide-react'
+import { Upload, Plus, Trash2, ChevronDown, ChevronUp, Database, Download, Merge, Wand2, CheckCircle2, XCircle, Lock, RotateCcw } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  deleteStudy, uploadStudies, createStudy, mergeStudyDatabases, aiScreenStudies, aiExtractData, updateStudy, API_BASE,
+  deleteStudy, uploadStudies, createStudy, mergeStudyDatabases, aiScreenStudies, aiExtractData, updateStudy, resetScreening, API_BASE,
   type Study,
 } from '../services/api'
 import StudiesDatabaseModal from './StudiesDatabaseModal'
@@ -78,6 +78,15 @@ export default function StudiesTable({ reviewId, studies }: Props) {
       invalidate()
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || 'Error en cribado IA'),
+  })
+
+  const resetMutation = useMutation({
+    mutationFn: () => resetScreening(reviewId),
+    onSuccess: (res) => {
+      toast.success(res.message)
+      invalidate()
+    },
+    onError: (e: any) => toast.error(e.response?.data?.detail || 'Error al reiniciar el cribado'),
   })
 
   const toggleMutation = useMutation({
@@ -227,6 +236,23 @@ export default function StudiesTable({ reviewId, studies }: Props) {
               >
                 <Wand2 size={14} className={screenMutation.isPending ? 'animate-spin' : ''} />
                 {screenMutation.isPending ? 'Cribando con IA...' : 'Cribar con IA'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm(
+                    '¿Reiniciar el cribado? Se borrarán TODAS las decisiones de inclusión/exclusión ' +
+                    '(las de la IA y las que marcaste manualmente) y todos los estudios quedarán ' +
+                    'pendientes para volver a cribarlos. Esta acción no se puede deshacer.'
+                  ))
+                    resetMutation.mutate()
+                }}
+                disabled={resetMutation.isPending || screenMutation.isPending || studies.length === 0}
+                className="btn-secondary text-xs"
+                title="Borra todas las decisiones de inclusión/exclusión para volver a cribar todos los estudios con los criterios actuales"
+              >
+                <RotateCcw size={14} className={resetMutation.isPending ? 'animate-spin' : ''} />
+                {resetMutation.isPending ? 'Reiniciando...' : 'Reiniciar cribado'}
               </button>
               <button
                 type="button"

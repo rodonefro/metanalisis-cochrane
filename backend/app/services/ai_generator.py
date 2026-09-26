@@ -22,11 +22,23 @@ def _study_summary(studies: list[dict]) -> str:
     lines = []
     for s in studies[:20]:
         label = s.get("study_label") or f"{s.get('authors','?')} {s.get('year','')}"
-        n = (s.get("total_intervention") or 0) + (s.get("total_control") or 0)
-        design = s.get("study_design", "RCT")
+        n = (s.get("total_intervention") or 0) + (s.get("total_control") or 0) or s.get("sample_size") or "no reportado"
+        design = s.get("study_design") or "diseño no especificado"
         lines.append(f"- {label} (n={n}, {design})")
     if len(studies) > 20:
         lines.append(f"  ... and {len(studies) - 20} more studies")
+    return "\n".join(lines)
+
+
+def _excluded_summary(excluded: list[dict]) -> str:
+    if not excluded:
+        return "No hay estudios excluidos registrados."
+    lines = []
+    for s in excluded[:40]:
+        label = s.get("study_label") or f"{s.get('authors', '?')} {s.get('year', '')}"
+        lines.append(f"- {label}: {s.get('exclusion_reason') or 'motivo no registrado'}")
+    if len(excluded) > 40:
+        lines.append(f"  ... y {len(excluded) - 40} estudios excluidos más")
     return "\n".join(lines)
 
 
@@ -59,6 +71,7 @@ def _base_context(review: dict, studies: list[dict]) -> str:
     outcomes = review.get("outcomes", "")
     effect_measure = review.get("effect_measure", "OR")
     model_type = review.get("model_type", "random")
+    criteria = eligibility_block(review)
     return (
         f"REVIEW TITLE: {review.get('title', 'Systematic Review')}\n\n"
         f"PICO:\n"
@@ -66,7 +79,8 @@ def _base_context(review: dict, studies: list[dict]) -> str:
         f"  Intervention: {intervention}\n"
         f"  Comparison: {comparison}\n"
         f"  Outcomes: {outcomes}\n\n"
-        f"EFFECT MEASURE: {effect_measure} | MODEL: {model_type}\n\n"
+        + (f"AUTHOR-DEFINED ELIGIBILITY CRITERIA (use verbatim, do not invent others):\n{criteria}\n\n" if criteria else "")
+        + f"EFFECT MEASURE: {effect_measure} | MODEL: {model_type}\n\n"
         f"INCLUDED STUDIES ({len(studies)} total):\n{_study_summary(studies)}"
     )
 
@@ -152,6 +166,9 @@ def generate_methods(review: dict, studies: list[dict]) -> str:
         "   b) Tipos de participantes\n"
         "   c) Tipos de intervenciones\n"
         "   d) Tipos de medidas de resultado (desenlaces primarios y secundarios)\n"
+        "   e) Criterios de exclusión\n"
+        "   (Para el punto 1 usa EXACTAMENTE los criterios de elegibilidad definidos por el autor "
+        "arriba; no agregues criterios que no estén definidos.)\n"
         "2. Métodos de búsqueda para identificar estudios (bases de datos: PubMed, Embase, "
         "Cochrane CENTRAL, Scopus, Web of Science; literatura gris)\n"
         "3. Obtención y análisis de datos:\n"
@@ -169,17 +186,26 @@ def generate_methods(review: dict, studies: list[dict]) -> str:
     return _call_claude(SYSTEM_COCHRANE, user)
 
 
-def generate_results(review: dict, studies: list[dict], meta_results: dict | None = None) -> str:
+def generate_results(
+    review: dict,
+    studies: list[dict],
+    meta_results: dict | None = None,
+    excluded: list[dict] | None = None,
+) -> str:
     ctx = _base_context(review, studies)
     meta = _meta_summary(meta_results)
     study_count = len(studies)
+    excluded = excluded or []
     user = (
         f"{ctx}\n\n{meta}\n\n"
+        f"EXCLUDED STUDIES ({len(excluded)} total, con el motivo registrado en el cribado):\n"
+        f"{_excluded_summary(excluded)}\n\n"
         "Escribe la sección de Resultados en ESPAÑOL para esta revisión sistemática Cochrane. Incluye:\n"
         "1. Descripción de los estudios:\n"
         f"   - Flujo de estudios (número cribados, elegibles, incluidos: {study_count} estudios)\n"
         "   - Características de los estudios incluidos (diseño, participantes, intervenciones)\n"
-        "   - Estudios excluidos (brevemente)\n"
+        f"   - Estudios excluidos ({len(excluded)}): resume los motivos de exclusión usando "
+        "únicamente los motivos listados arriba\n"
         "   - Resumen de evaluación del riesgo de sesgo\n"
         "2. Efectos de las intervenciones:\n"
         "   - Desenlace(s) primario(s) con resultados del metaanálisis\n"
@@ -375,6 +401,7 @@ def generate_section(
     studies: list[dict],
     meta_results: dict | None = None,
     citation_style: str = "vancouver",
+    excluded: list[dict] | None = None,
 ) -> str:
     """Dispatch to the appropriate generator function by section name."""
     generators = {
@@ -402,96 +429,161 @@ def generate_section(
     fn = generators[section_key]
     if section_key == "objectives":
         return fn(review)
+    if section_key == "results":
+        return fn(review, studies, meta_results, excluded)
     return fn(review, studies, meta_results) if section_key in ("abstract", "results", "discussion") else fn(review, studies)
+
+
+_ELIGIBILITY_FIELDS = [
+    ("population", "Población (PICO)"),
+    ("intervention", "Intervención (PICO)"),
+    ("comparison", "Comparación (PICO)"),
+    ("outcomes", "Desenlaces (PICO)"),
+    ("study_design", "Diseño de estudio (PICO)"),
+    ("types_of_studies", "Tipos de estudios"),
+    ("types_of_participants", "Tipos de participantes"),
+    ("types_of_interventions", "Tipos de intervenciones"),
+    ("types_of_outcomes", "Tipos de medidas de resultado"),
+    ("primary_outcomes", "Desenlaces primarios"),
+    ("secondary_outcomes", "Desenlaces secundarios"),
+    ("inclusion_criteria", "CRITERIOS DE INCLUSIÓN"),
+    ("exclusion_criteria", "CRITERIOS DE EXCLUSIÓN"),
+]
+
+
+def eligibility_block(review: dict) -> str:
+    """Author-defined eligibility criteria, verbatim, omitting empty fields."""
+    parts = []
+    for key, label in _ELIGIBILITY_FIELDS:
+        value = (review.get(key) or "").strip()
+        if value:
+            parts.append(f"{label}:\n{value}")
+    return "\n\n".join(parts)
+
+
+_SCREEN_STUDY_FIELDS = [
+    "study_label", "authors", "year", "title", "publication_type", "journal",
+    "study_design", "reasoning_study_design", "country", "setting", "sample_size",
+    "age_mean", "percent_female", "patient_population", "inclusion_criteria",
+    "group_comparison", "objective_text", "methods_used", "abstract_text",
+    "study_results", "survival_outcomes", "mortality_factors", "key_findings",
+    "findings", "notes",
+]
+
+_SCREEN_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "decisions": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer"},
+                    "decision": {"type": "string", "enum": ["include", "exclude", "uncertain"]},
+                    "criterion": {"type": "string"},
+                    "reason": {"type": "string"},
+                },
+                "required": ["id", "decision", "criterion", "reason"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["decisions"],
+    "additionalProperties": False,
+}
+
+_SCREEN_SYSTEM = (
+    "Eres un revisor metodológico experto en revisiones sistemáticas Cochrane (Manual Cochrane, "
+    "estándares MECIR y PRISMA 2020). Tu tarea es aplicar de forma estricta, reproducible y "
+    "trazable los criterios de elegibilidad definidos por el autor de la revisión. "
+    "Nunca inventas criterios propios ni usas conocimiento externo sobre un estudio: decides "
+    "únicamente con la información proporcionada de cada estudio."
+)
 
 
 def screen_studies_with_ai(review: dict, studies: list[dict]) -> dict:
     """
-    Screen studies against PICO criteria using AI.
-    Returns dict: {study_id: {"included": bool, "reason": str|None}}
-    Processes in batches of 30 to avoid token limits.
+    Apply the review's eligibility criteria to each study.
+    Returns {study_id: {"decision": "include"|"exclude"|"uncertain", "criterion": str, "reason": str}}.
+    Raises on a refusal or an unparseable response instead of guessing a decision.
     """
-    import json, re
+    import json
 
-    pico = (
-        f"Población: {review.get('population', '')}\n"
-        f"Intervención: {review.get('intervention', '')}\n"
-        f"Comparación: {review.get('comparison', '')}\n"
-        f"Desenlaces: {review.get('outcomes', '')}"
-    )
-    title = review.get("title", "Revisión sistemática")
-    types_of_studies = (review.get("types_of_studies") or "").strip()
-    inclusion_criteria = (review.get("inclusion_criteria") or "").strip()
-    exclusion_criteria = (review.get("exclusion_criteria") or "").strip()
-
-    criteria_block = ""
-    if types_of_studies:
-        criteria_block += f"\nTIPOS DE ESTUDIO A INCLUIR (definidos por el autor de la revisión):\n{types_of_studies}\n"
-    if inclusion_criteria:
-        criteria_block += f"\nCRITERIOS DE INCLUSIÓN:\n{inclusion_criteria}\n"
-    if exclusion_criteria:
-        criteria_block += f"\nCRITERIOS DE EXCLUSIÓN:\n{exclusion_criteria}\n"
-
-    study_type_instruction = (
-        "- Tipo de estudio: usa EXCLUSIVAMENTE los tipos de estudio definidos por el autor "
-        "(ver 'TIPOS DE ESTUDIO A INCLUIR' y 'CRITERIOS DE INCLUSIÓN' arriba). "
-        "Si el autor incluyó estudios observacionales (cohorte, casos y controles, transversales, etc.), "
-        "inclúyelos también — NO los rechaces solo por no ser ensayos aleatorizados (RCT). "
-        "Si no se especificó ningún tipo de estudio, acepta cualquier diseño relevante a la pregunta PICO."
-        if (types_of_studies or inclusion_criteria) else
-        "- Tipo de estudio: acepta cualquier diseño relevante a la pregunta PICO (no se especificaron restricciones)."
-    )
-
-    results: dict = {}
-    batch_size = 30
-
+    criteria = eligibility_block(review)
+    title = review.get("title") or "Revisión sistemática"
     client = _get_client()
+    results: dict = {}
+    batch_size = 15
 
     for i in range(0, len(studies), batch_size):
         batch = studies[i:i + batch_size]
-        lines = []
+        payload = []
         for s in batch:
-            sid = s["id"]
-            label = s.get("study_label") or s.get("authors") or f"ID:{sid}"
-            year = s.get("year") or ""
-            study_title = s.get("title") or ""
-            abstract = (s.get("abstract_text") or "")[:400]
-            design = s.get("study_design") or ""
-            lines.append(
-                f'  {{"id": {sid}, "label": "{label}", "year": "{year}", '
-                f'"title": "{study_title[:120]}", "design": "{design}", '
-                f'"abstract": "{abstract}"}}'
-            )
-        studies_json = "[\n" + ",\n".join(lines) + "\n]"
+            entry = {"id": s["id"]}
+            for field in _SCREEN_STUDY_FIELDS:
+                value = s.get(field)
+                if value not in (None, ""):
+                    entry[field] = value
+            payload.append(entry)
 
         user = (
-            f"REVISIÓN SISTEMÁTICA: {title}\n\nCRITERIOS PICO:\n{pico}\n"
-            f"{criteria_block}\n"
-            "Evalúa cada estudio para determinar si debe incluirse en el metaanálisis. Considera:\n"
-            f"{study_type_instruction}\n"
-            "- Población correcta según los criterios\n"
-            "- Intervención y comparación relevantes\n"
-            "- Desenlaces reportados\n"
-            "- Respeta los criterios de exclusión definidos por el autor, si los hay\n\n"
-            f"ESTUDIOS A CRIBAR:\n{studies_json}\n\n"
-            "Responde ÚNICAMENTE con JSON válido:\n"
-            '{"decisions": [{"id": N, "included": true/false, "reason": "razón breve en español si excluido, null si incluido"}]}'
+            f"REVISIÓN SISTEMÁTICA: {title}\n\n"
+            "CRITERIOS DE ELEGIBILIDAD DEFINIDOS POR EL AUTOR (aplícalos tal cual):\n"
+            f"{criteria}\n\n"
+            "ESTUDIOS A EVALUAR (JSON; cada campo proviene de la base de datos del autor):\n"
+            f"{json.dumps(payload, ensure_ascii=False, indent=1)}\n\n"
+            "Para CADA estudio, verifica uno por uno todos los criterios de inclusión y todos los "
+            "criterios de exclusión anteriores, y asigna una decisión:\n"
+            "- \"include\": la información disponible muestra que cumple TODOS los criterios de "
+            "inclusión y NO cumple ningún criterio de exclusión.\n"
+            "- \"exclude\": hay evidencia explícita en la información del estudio de que incumple al "
+            "menos un criterio de inclusión o cumple al menos un criterio de exclusión.\n"
+            "- \"uncertain\": la información disponible no permite verificar al menos un criterio "
+            "obligatorio (requiere revisión a texto completo). No adivines.\n\n"
+            "Reglas:\n"
+            "1. Tipo de estudio: acepta exactamente los diseños que el autor definió. Si el autor "
+            "admite estudios observacionales (cohorte, casos y controles, transversales, etc.), NO "
+            "los excluyas por no ser ensayos aleatorizados. Si el autor no restringió el diseño, "
+            "acepta cualquier diseño que responda la pregunta PICO.\n"
+            "2. No excluyas un estudio solo porque el resumen no presente datos numéricos del "
+            "desenlace: eso se resuelve en la extracción de datos. Sí exclúyelo si claramente no "
+            "evalúa ningún desenlace de interés.\n"
+            "3. Revisiones sistemáticas, metaanálisis, editoriales, cartas, protocolos sin resultados "
+            "y estudios en animales o in vitro se excluyen, salvo que el autor los admita "
+            "explícitamente.\n"
+            "4. No agregues criterios que el autor no haya definido.\n\n"
+            "En \"criterion\" escribe el criterio concreto que determinó la decisión (para "
+            "\"include\", escribe \"Cumple todos los criterios\"). En \"reason\" explica en español, "
+            "en una o dos frases, la evidencia del estudio que sustenta la decisión. "
+            "Devuelve exactamente una decisión por cada id recibido."
         )
 
-        message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=4096,
-            system="Eres experto en revisiones sistemáticas Cochrane. Responde ÚNICAMENTE con JSON válido.",
+        with client.messages.stream(
+            model="claude-opus-5",
+            max_tokens=64000,
+            thinking={"type": "adaptive"},
+            output_config={
+                "effort": "high",
+                "format": {"type": "json_schema", "schema": _SCREEN_SCHEMA},
+            },
+            system=_SCREEN_SYSTEM,
             messages=[{"role": "user", "content": user}],
-        )
-        text = message.content[0].text.strip()
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        if match:
-            data = json.loads(match.group())
-            for d in data.get("decisions", []):
+        ) as stream:
+            message = stream.get_final_message()
+
+        if message.stop_reason == "refusal":
+            raise RuntimeError("El modelo declinó evaluar este lote de estudios.")
+        if message.stop_reason == "max_tokens":
+            raise RuntimeError("La respuesta del cribado quedó truncada; reintenta.")
+
+        text = next(b.text for b in message.content if b.type == "text")
+        batch_ids = {s["id"] for s in batch}
+        for d in json.loads(text)["decisions"]:
+            if d["id"] in batch_ids:
                 results[d["id"]] = {
-                    "included": bool(d.get("included", True)),
-                    "reason": d.get("reason"),
+                    "decision": d["decision"],
+                    "criterion": d["criterion"].strip(),
+                    "reason": d["reason"].strip(),
                 }
 
     return results
