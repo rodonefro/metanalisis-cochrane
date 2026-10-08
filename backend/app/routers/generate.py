@@ -3,7 +3,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from ..database import get_db
-from ..models import Review, Study, Analysis
+from ..models import Review, Study, Analysis, SearchDatabase
+from ..services.prisma import sync_prisma, search_summary
 from ..schemas import GenerateRequest, GenerateResponse
 from ..services.ai_generator import generate_section
 
@@ -41,6 +42,25 @@ def generate_text(
         raise HTTPException(status_code=404, detail="Revisión no encontrada")
 
     review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
+    if section_key in ("methods", "results", "abstract"):
+        searches = (db.query(SearchDatabase).filter(SearchDatabase.review_id == review_id)
+                    .order_by(SearchDatabase.id).all())
+        flow = sync_prisma(db, review)
+        f = flow["fields"]
+        review_dict["_search_log"] = search_summary(searches)
+        review_dict["_prisma_flow"] = (
+            "Registros identificados por fuente: "
+            + (", ".join(f"{x['name']} n={x['n']}" for x in flow["sources"]) or "ninguno")
+            + f"\nDuplicados eliminados: {f['prisma_duplicates_removed']}"
+            + f"\nOtros eliminados antes del cribado: {f['prisma_other_removed']}"
+            + f"\nRegistros cribados (título/resumen): {f['prisma_screened']}"
+            + f"\nExcluidos en el cribado: {f['prisma_excluded_screening']}"
+            + f"\nTextos completos buscados: {f['prisma_sought']}; no recuperados: {f['prisma_not_retrieved']}"
+            + f"\nEvaluados a texto completo: {f['prisma_assessed']}; excluidos: {f['prisma_excluded_eligibility']}"
+            + f" ({(f['prisma_exclusion_reasons'] or 'sin motivos').replace('=', ': n=')})"
+            + f"\nEstudios incluidos en la revisión: {f['prisma_included']}"
+            + f"\nEstudios incluidos en el metaanálisis: {f['prisma_reports_included']}"
+        )
 
     studies = db.query(Study).filter(Study.review_id == review_id).all()
     all_studies = [

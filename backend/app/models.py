@@ -188,6 +188,21 @@ class Study(Base):
     # that was already made.
     screening_reviewed = Column(Boolean, default=False)
 
+    # Reference-manager / PRISMA tracking (Rayyan-style screening)
+    # screening_decision: include | exclude | maybe  (None = pending)
+    screening_decision = Column(String(20), nullable=True)
+    # screening_stage: title_abstract | full_text — the stage at which the decision was made
+    screening_stage = Column(String(20), nullable=True)
+    # full_text_status: retrieved | not_retrieved  (None = not sought yet)
+    full_text_status = Column(String(20), nullable=True)
+    # Every search source where this record was found, "; "-separated. A record
+    # merged from PubMed and Scopus keeps both, so per-database PRISMA counts stay exact.
+    all_sources = Column(Text, nullable=True)
+    pmid = Column(String(50), nullable=True)
+    keywords = Column(Text, nullable=True)
+    # JSON: {field: {"value": x, "quote": "verbatim source text", "source": "abstract_text"}}
+    extraction_evidence = Column(Text, nullable=True)
+
     review = relationship("Review", back_populates="studies")
 
 
@@ -218,4 +233,9 @@ class SearchDatabase(Base):
     database_name = Column(String(100), nullable=False)
     search_string = Column(Text, nullable=True)
     search_date = Column(String(50), nullable=True)
-    results_count = Column(Integer, nullable=True)
+    results_count = Column(Integer, nullable=True)        # records the database reported for the search
+    # database | register | other  (other = citation searching, websites, experts...)
+    source_type = Column(String(20), default="database")
+    records_imported = Column(Integer, default=0)         # records actually imported into the app
+    duplicates_found = Column(Integer, default=0)         # of those, records merged into an existing one
+    created_at = Column(DateTime, default=datetime.utcnow)

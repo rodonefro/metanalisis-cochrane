@@ -73,6 +73,13 @@ class StudyBase(BaseModel):
     exclusion_reason: Optional[str] = None
     notes: Optional[str] = None
     screening_reviewed: Optional[bool] = False
+    screening_decision: Optional[str] = None
+    screening_stage: Optional[str] = None
+    full_text_status: Optional[str] = None
+    all_sources: Optional[str] = None
+    pmid: Optional[str] = None
+    keywords: Optional[str] = None
+    extraction_evidence: Optional[str] = None
 
 
 class StudyCreate(StudyBase):
@@ -228,11 +235,22 @@ class SearchDatabaseCreate(BaseModel):
     search_string: Optional[str] = None
     search_date: Optional[str] = None
     results_count: Optional[int] = None
+    source_type: Optional[str] = "database"
+
+
+class SearchDatabaseUpdate(BaseModel):
+    database_name: Optional[str] = None
+    search_string: Optional[str] = None
+    search_date: Optional[str] = None
+    results_count: Optional[int] = None
+    source_type: Optional[str] = None
 
 
 class SearchDatabaseOut(SearchDatabaseCreate):
     id: int
     review_id: int
+    records_imported: Optional[int] = 0
+    duplicates_found: Optional[int] = 0
 
     class Config:
         from_attributes = True

@@ -8,8 +8,9 @@ from ..models import Review, Study, Analysis
 from ..schemas import AnalysisOut
 from ..services.statistics import run_meta_analysis, result_to_dict, meta_result_from_dict
 from ..services.plots import generate_forest_plot, generate_funnel_plot, generate_rob_traffic_light, generate_prisma_2020, generate_grade_table  # used by on-demand endpoints
+from ..services.prisma import sync_prisma, prisma_plot_kwargs
 from ..services.ai_generator import (
-    generate_prisma_autofill, screen_studies_with_ai, extract_quantitative_data, eligibility_block,
+    screen_studies_with_ai, extract_quantitative_data, eligibility_block,
     interpret_forest_plot, interpret_funnel_plot, interpret_grade_table, interpret_rob_plot,
 )
 
@@ -234,91 +235,25 @@ def get_rob_plot(review_id: int, db: Session = Depends(get_db)):
 
 @router.get("/prisma")
 def get_prisma_diagram(review_id: int, db: Session = Depends(get_db)):
-    """Generate and return a PRISMA 2020 flowchart as base64 PNG."""
+    """Recompute the PRISMA 2020 flow from the records and return it as a base64 PNG."""
     review = db.query(Review).filter(Review.id == review_id).first()
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")
+    result = sync_prisma(db, review)
     try:
-        b64 = generate_prisma_2020(
-            db_names=review.prisma_db_names,
-            other_sources=review.prisma_other_sources,
-            duplicates_removed=review.prisma_duplicates_removed,
-            other_removed=review.prisma_other_removed,
-            screened=review.prisma_screened,
-            excluded_screening=review.prisma_excluded_screening,
-            sought=review.prisma_sought,
-            not_retrieved=review.prisma_not_retrieved,
-            assessed=review.prisma_assessed,
-            excluded_eligibility=review.prisma_excluded_eligibility,
-            exclusion_reasons=review.prisma_exclusion_reasons,
-            included=review.prisma_included,
-            reports_included=review.prisma_reports_included,
-        )
+        b64 = generate_prisma_2020(**prisma_plot_kwargs(result["fields"]))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Error generating PRISMA diagram: {exc}")
-    return {"prisma_b64": b64}
+    return {"prisma_b64": b64, **result}
 
 
-@router.post("/prisma/autofill")
-def autofill_prisma(review_id: int, db: Session = Depends(get_db)):
-    """Use AI to generate and save realistic PRISMA numbers based on the review's studies."""
+@router.post("/prisma/compute")
+def compute_prisma_flow(review_id: int, db: Session = Depends(get_db)):
+    """Exact PRISMA counts derived from the search log and every record's screening decision."""
     review = db.query(Review).filter(Review.id == review_id).first()
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")
-
-    total_count = db.query(Study).filter(Study.review_id == review_id).count()
-    if total_count == 0:
-        raise HTTPException(status_code=422, detail="Agrega estudios a la revisión antes de auto-generar el PRISMA.")
-
-    included_count = db.query(Study).filter(
-        Study.review_id == review_id,
-        Study.included == True,  # noqa: E712
-    ).count()
-
-    # "Reports of included studies" should reflect how many included studies
-    # actually have enough quantitative data to enter the pooled estimate (k),
-    # not just how many are marked included=True. Use the latest analysis k
-    # if one exists; otherwise fall back to included_count (no analysis run yet).
-    latest_analysis = (
-        db.query(Analysis)
-        .filter(Analysis.review_id == review_id)
-        .order_by(Analysis.created_at.desc())
-        .first()
-    )
-    reports_included = included_count
-    if latest_analysis:
-        try:
-            reports_included = json.loads(latest_analysis.results_json).get("k", included_count)
-        except Exception:
-            pass
-
-    review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
-
-    try:
-        data = generate_prisma_autofill(review_dict, included_count)
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error en generación IA del PRISMA: {exc}")
-
-    # Override key numbers with real DB values so the diagram is consistent
-    assessed = data.get("prisma_assessed") or total_count
-    if assessed < included_count:
-        assessed = total_count
-    data["prisma_included"] = included_count
-    data["prisma_reports_included"] = reports_included
-    data["prisma_assessed"] = assessed
-    data["prisma_excluded_eligibility"] = max(0, assessed - included_count)
-
-    # Persist generated values to the review
-    for field, value in data.items():
-        if hasattr(review, field):
-            setattr(review, field, value)
-    db.commit()
-    db.refresh(review)
-
-    return {
-        "message": f"PRISMA auto-generado: {included_count} incluidos de {total_count} identificados",
-        "data": data,
-    }
+    return sync_prisma(db, review)
 
 
 @router.post("/ai-screen")
@@ -380,6 +315,8 @@ def ai_screen_studies(review_id: int, db: Session = Depends(get_db)):
         if decision is None:
             continue
         kind = decision["decision"]
+        study.screening_decision = kind if kind in ("include", "exclude") else "maybe"
+        study.screening_stage = "title_abstract"
         if kind == "include":
             study.included = True
             study.exclusion_reason = None
@@ -425,7 +362,8 @@ def reset_screening(review_id: int, db: Session = Depends(get_db)):
         db.query(Study)
         .filter(Study.review_id == review_id)
         .update(
-            {Study.included: True, Study.exclusion_reason: None, Study.screening_reviewed: False},
+            {Study.included: True, Study.exclusion_reason: None, Study.screening_reviewed: False,
+             Study.screening_decision: None, Study.screening_stage: None},
             synchronize_session=False,
         )
     )
@@ -465,39 +403,45 @@ def ai_extract_data(review_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Error en extracción IA: {exc}")
 
     updated_count = 0
-    numeric_fields = {
-        "events_intervention", "total_intervention", "events_control", "total_control",
-        "mean_intervention", "sd_intervention", "n_intervention",
-        "mean_control", "sd_control", "n_control",
-        "effect_size", "effect_size_lower", "effect_size_upper", "sample_size",
-    }
-
+    report = []
     study_map = {s.id: s for s in studies}
-    for study_id, fields in extractions.items():
+    for study_id, res in extractions.items():
         study = study_map.get(study_id)
         if not study:
             continue
-        changed = False
-        for field, value in fields.items():
-            if field not in numeric_fields:
-                continue
-            if getattr(study, field, None) is None and value is not None:
-                try:
-                    if field in {"events_intervention", "total_intervention", "events_control",
-                                 "total_control", "n_intervention", "n_control", "sample_size"}:
-                        setattr(study, field, int(float(value)))
-                    else:
-                        setattr(study, field, float(value))
-                    changed = True
-                except (TypeError, ValueError):
-                    pass
-        if changed:
+        written = {}
+        for field, value in res["values"].items():
+            # Never overwrite data the author already entered.
+            if getattr(study, field, None) is None:
+                setattr(study, field, value)
+                written[field] = value
+        if written:
             updated_count += 1
+            try:
+                evidence = json.loads(study.extraction_evidence or "{}")
+            except ValueError:
+                evidence = {}
+            for field in written:
+                evidence[field] = {**res["evidence"][field], "method": "IA (cita verificada)",
+                                   "date": datetime.utcnow().strftime("%Y-%m-%d")}
+            study.extraction_evidence = json.dumps(evidence, ensure_ascii=False)
+        report.append({
+            "id": study.id,
+            "study": study.study_label or study.authors or f"ID {study.id}",
+            "outcome": res["outcome"],
+            "written": written,
+            "rejected": res["rejected"],
+        })
 
     db.commit()
+    n_rejected = sum(len(r["rejected"]) for r in report)
     return {
-        "message": f"Extracción completada: {updated_count} estudios actualizados con datos numéricos",
+        "message": (
+            f"Extracción verificada: {updated_count} estudios actualizados con datos citados textualmente"
+            + (f"; {n_rejected} valores descartados por no poder verificarse" if n_rejected else "")
+        ),
         "updated": updated_count,
         "total_included": len(studies),
         "candidates_with_abstract": len([s for s in studies_list if s.get("abstract_text")]),
+        "report": report,
     }

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { BarChart2, ChevronDown, ChevronUp, Play, Wand2, Download, Filter, Table, Zap, CheckCircle2, Loader2, ShieldAlert } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { runAnalysis, getLatestAnalysis, generateSection, getForestPlot, getFunnelPlot, getGradeTable, getRobPlot, aiScreenStudies, aiExtractData, autofillPrisma } from '../services/api'
+import { runAnalysis, getLatestAnalysis, generateSection, getForestPlot, getFunnelPlot, getGradeTable, getRobPlot, aiScreenStudies, aiExtractData, computePrisma } from '../services/api'
 import type { Analysis } from '../services/api'
 
 interface Props {
@@ -222,7 +222,7 @@ export default function AnalysisPanel({ reviewId }: Props) {
       // before this run and no longer matches the meta-analysis k.
       setPipelineStep('prisma')
       toast.loading('Paso 2/5 — Sincronizando diagrama PRISMA...', { id: 'pipeline' })
-      await autofillPrisma(reviewId)
+      await computePrisma(reviewId)
       qc.invalidateQueries({ queryKey: ['review', reviewId] })
 
       setPipelineStep('extraction')

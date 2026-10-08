@@ -7,6 +7,7 @@ from ..database import get_db
 from ..models import Review, Study
 from ..schemas import StudyCreate, StudyUpdate, StudyOut
 from ..services.file_parser import parse_file
+from .references import import_records
 
 router = APIRouter(prefix="/reviews/{review_id}/studies", tags=["studies"])
 
@@ -55,41 +56,13 @@ async def upload_studies(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
-    # Get valid column names from the Study model to filter unknown fields
-    valid_columns = {c.key for c in Study.__table__.columns} - {"id", "review_id"}
-
-    created = []
-    for s in studies_data:
-        filtered = {k: v for k, v in s.items() if k in valid_columns}
-        if source_database and not filtered.get("source_database"):
-            filtered["source_database"] = source_database
-        study = Study(review_id=review_id, **filtered)
-        db.add(study)
-        created.append(study)
-    db.commit()
-    for s in created:
-        db.refresh(s)
-    return {"created": len(created), "studies": [StudyOut.model_validate(s) for s in created]}
-
-
-def _norm_title(t: str) -> str:
-    """Lowercase, remove non-alphanumeric characters for fuzzy title matching."""
-    return re.sub(r"[^a-z0-9]", "", t.lower()) if t else ""
-
-
-def _merge_into(existing: Study, incoming: dict, valid_columns: set) -> bool:
-    """Fill empty fields in existing study with non-empty values from incoming. Returns True if any field was updated."""
-    changed = False
-    for field, value in incoming.items():
-        if field not in valid_columns:
-            continue
-        if value is None:
-            continue
-        current = getattr(existing, field, None)
-        if current is None or current == "":
-            setattr(existing, field, value)
-            changed = True
-    return changed
+    # Rows keep their own source column when present; otherwise the label chosen
+    # in the UI, otherwise the file name. Duplicates are merged and logged so the
+    # PRISMA flow stays exact.
+    default_source = source_database or re.sub(r"\.[^.]+$", "", file.filename or "Importación")
+    result = import_records(db, review_id, studies_data, default_source)
+    return {"created": result["added"], "duplicates_merged": result["duplicates_merged"],
+            "by_source": result["by_source"]}
 
 
 @router.post("/upload-merge", status_code=status.HTTP_201_CREATED)
@@ -100,77 +73,32 @@ async def upload_merge_studies(
 ):
     """
     Upload one or more Excel/CSV files from different search databases.
-    Studies are deduplicated by DOI (exact) or normalized title.
-    Existing studies are enriched with new data; truly new studies are added.
+    Studies are deduplicated by DOI, PMID or normalized title; each file is
+    logged as a search source named after the file.
     """
     _get_review_or_404(review_id, db)
-    valid_columns = {c.key for c in Study.__table__.columns} - {"id", "review_id"}
-
-    # Build lookup indexes from existing studies
-    existing_studies = db.query(Study).filter(Study.review_id == review_id).all()
-    doi_index: dict[str, Study] = {
-        s.doi.strip().lower(): s for s in existing_studies if s.doi and s.doi.strip()
-    }
-    title_index: dict[str, Study] = {
-        _norm_title(s.title): s for s in existing_studies if s.title and _norm_title(s.title)
-    }
-
     total_added = 0
     total_merged = 0
-    total_skipped = 0
     errors = []
 
     for upload_file in files:
         content = await upload_file.read()
         filename = upload_file.filename or "upload.csv"
-        # Infer source_database from filename (strip extension)
         source_db_name = re.sub(r"\.[^.]+$", "", filename)
-
         try:
             studies_data = parse_file(content, filename)
         except ValueError as exc:
             errors.append(f"{filename}: {exc}")
             continue
-
-        for s in studies_data:
-            filtered = {k: v for k, v in s.items() if k in valid_columns}
-            # Stamp the source database if not already set in the data
-            if not filtered.get("source_database"):
-                filtered["source_database"] = source_db_name
-
-            # --- Duplicate detection ---
-            doi_key = (filtered.get("doi") or "").strip().lower()
-            title_key = _norm_title(filtered.get("title") or "")
-
-            matched: Study | None = None
-            if doi_key and doi_key in doi_index:
-                matched = doi_index[doi_key]
-            elif title_key and title_key in title_index:
-                matched = title_index[title_key]
-
-            if matched:
-                changed = _merge_into(matched, filtered, valid_columns)
-                if changed:
-                    total_merged += 1
-                else:
-                    total_skipped += 1
-            else:
-                new_study = Study(review_id=review_id, **filtered)
-                db.add(new_study)
-                # Add to indexes so subsequent files in this batch don't re-add
-                if doi_key:
-                    doi_index[doi_key] = new_study
-                if title_key:
-                    title_index[title_key] = new_study
-                total_added += 1
-
-    db.commit()
+        result = import_records(db, review_id, studies_data, source_db_name)
+        total_added += result["added"]
+        total_merged += result["duplicates_merged"]
 
     result = {
         "files_processed": len(files) - len(errors),
         "added": total_added,
         "merged": total_merged,
-        "skipped_exact_duplicates": total_skipped,
+        "skipped_exact_duplicates": 0,
     }
     if errors:
         result["errors"] = errors
@@ -199,6 +127,9 @@ def update_study(
     # so the AI screener won't overwrite it on a later run.
     if "included" in payload_data:
         study.screening_reviewed = True
+        if "screening_decision" not in payload_data:
+            study.screening_decision = "include" if study.included else "exclude"
+            study.screening_stage = study.screening_stage or "title_abstract"
     db.commit()
     db.refresh(study)
     return study

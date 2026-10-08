@@ -118,7 +118,11 @@ def generate_abstract(review: dict, studies: list[dict], meta_results: dict | No
         "Escribe un resumen estructurado en ESPAÑOL para esta revisión sistemática Cochrane "
         "con las siguientes subsecciones: Antecedentes, Objetivos, Métodos de búsqueda, "
         "Criterios de selección, Obtención y análisis de datos, Resultados principales, "
-        "Conclusiones de los autores. Sé conciso (300-400 palabras en total)."
+        "Conclusiones de los autores. Sé conciso (300-400 palabras en total). En Métodos de "
+        "búsqueda nombra solo las fuentes del REGISTRO DE BÚSQUEDAS y en Resultados usa los números "
+        "exactos del FLUJO PRISMA.\n\n"
+        f"REGISTRO DE BÚSQUEDAS:\n{review.get('_search_log') or 'No registrado.'}\n\n"
+        f"FLUJO PRISMA 2020 (exacto):\n{review.get('_prisma_flow') or 'No disponible.'}"
     )
     return _call_claude(SYSTEM_COCHRANE, user)
 
@@ -169,8 +173,9 @@ def generate_methods(review: dict, studies: list[dict]) -> str:
         "   e) Criterios de exclusión\n"
         "   (Para el punto 1 usa EXACTAMENTE los criterios de elegibilidad definidos por el autor "
         "arriba; no agregues criterios que no estén definidos.)\n"
-        "2. Métodos de búsqueda para identificar estudios (bases de datos: PubMed, Embase, "
-        "Cochrane CENTRAL, Scopus, Web of Science; literatura gris)\n"
+        "2. Métodos de búsqueda para identificar estudios. Describe ÚNICAMENTE las fuentes del "
+        "REGISTRO DE BÚSQUEDAS de abajo, con su fecha y estrategia tal como están registradas; no "
+        "menciones ninguna base de datos, registro o literatura gris que no aparezca en él.\n"
         "3. Obtención y análisis de datos:\n"
         "   - Selección de estudios\n"
         "   - Extracción de datos y gestión\n"
@@ -181,7 +186,8 @@ def generate_methods(review: dict, studies: list[dict]) -> str:
         f"   - Evaluación de heterogeneidad (Q de Cochran, I², modelo de efectos {model_type})\n"
         "   - Evaluación de sesgos de publicación (gráfico de embudo, prueba de Egger)\n"
         "   - Síntesis de datos\n"
-        "Escribe aproximadamente 800-1000 palabras."
+        "Escribe aproximadamente 800-1000 palabras.\n\n"
+        f"REGISTRO DE BÚSQUEDAS (fuentes realmente consultadas):\n{review.get('_search_log') or 'No registrado.'}"
     )
     return _call_claude(SYSTEM_COCHRANE, user)
 
@@ -202,7 +208,8 @@ def generate_results(
         f"{_excluded_summary(excluded)}\n\n"
         "Escribe la sección de Resultados en ESPAÑOL para esta revisión sistemática Cochrane. Incluye:\n"
         "1. Descripción de los estudios:\n"
-        f"   - Flujo de estudios (número cribados, elegibles, incluidos: {study_count} estudios)\n"
+        "   - Flujo de estudios: usa EXACTAMENTE los números del FLUJO PRISMA de abajo (son los del "
+        "diagrama); no calcules ni redondees otros\n"
         "   - Características de los estudios incluidos (diseño, participantes, intervenciones)\n"
         f"   - Estudios excluidos ({len(excluded)}): resume los motivos de exclusión usando "
         "únicamente los motivos listados arriba\n"
@@ -214,7 +221,8 @@ def generate_results(
         "   - Análisis de subgrupos (si aplica)\n"
         "   - Sesgos de publicación\n"
         "Referencia hallazgos específicos de estudios y las estimaciones agrupadas. "
-        "Escribe aproximadamente 700-900 palabras."
+        "Escribe aproximadamente 700-900 palabras.\n\n"
+        f"FLUJO PRISMA 2020 (exacto):\n{review.get('_prisma_flow') or f'{study_count} estudios incluidos.'}"
     )
     return _call_claude(SYSTEM_COCHRANE, user)
 
@@ -589,97 +597,245 @@ def screen_studies_with_ai(review: dict, studies: list[dict]) -> dict:
     return results
 
 
+_EXTRACT_SOURCE_FIELDS = [
+    ("abstract_text", "Resumen"),
+    ("study_results", "Resultados"),
+    ("key_findings", "Hallazgos clave"),
+    ("findings", "Hallazgos"),
+    ("survival_outcomes", "Desenlaces de supervivencia"),
+    ("mortality_factors", "Mortalidad"),
+    ("group_comparison", "Comparación de grupos"),
+    ("methods_used", "Métodos"),
+    ("notes", "Notas"),
+]
+
+_EXTRACT_FIELDS_BY_MEASURE = {
+    "binary": ["events_intervention", "total_intervention", "events_control", "total_control"],
+    "continuous": ["mean_intervention", "sd_intervention", "n_intervention",
+                   "mean_control", "sd_control", "n_control"],
+    "precalculated": ["effect_size", "effect_size_lower", "effect_size_upper",
+                      "total_intervention", "total_control"],
+}
+
+_INT_EXTRACT_FIELDS = {"events_intervention", "total_intervention", "events_control",
+                       "total_control", "n_intervention", "n_control", "sample_size"}
+
+_EXTRACT_SYSTEM = (
+    "Eres un extractor de datos para revisiones sistemáticas Cochrane que trabaja en doble "
+    "verificación. Solo registras un número si aparece escrito en el texto del estudio que se te "
+    "entrega, y para cada número copias literalmente la frase de donde sale. Nunca calculas, "
+    "estimas, imputas, conviertes unidades, ni usas conocimiento externo sobre el estudio. Si un "
+    "dato no está escrito de forma explícita, lo dejas en null."
+)
+
+
+def _extract_schema(fields: list[str]) -> dict:
+    item = {
+        "type": "object",
+        "properties": {
+            "field": {"type": "string", "enum": fields + ["sample_size"]},
+            "value": {"type": "number"},
+            "quote": {"type": "string"},
+            "source": {"type": "string", "enum": [f for f, _ in _EXTRACT_SOURCE_FIELDS]},
+        },
+        "required": ["field", "value", "quote", "source"],
+        "additionalProperties": False,
+    }
+    return {
+        "type": "object",
+        "properties": {
+            "studies": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "integer"},
+                        "outcome_reported": {"type": "string"},
+                        "values": {"type": "array", "items": item},
+                    },
+                    "required": ["id", "outcome_reported", "values"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["studies"],
+        "additionalProperties": False,
+    }
+
+
+def _norm_text(t: str) -> str:
+    import re, unicodedata
+    t = unicodedata.normalize("NFKC", t or "").lower()
+    t = t.replace("−", "-").replace("–", "-").replace("—", "-").replace("·", ".")
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _number_in_quote(value: float, quote: str) -> bool:
+    """The extracted number must be written in the quoted sentence (no derived numbers)."""
+    import re
+    for tok in re.findall(r"\d+(?:[.,]\d+)?", quote):
+        try:
+            if abs(float(tok.replace(",", ".")) - float(value)) < 1e-9:
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+def _check_consistency(fields: dict) -> list[str]:
+    """Plausibility checks between extracted values; returns the fields to reject."""
+    bad = set()
+    for e, t in (("events_intervention", "total_intervention"), ("events_control", "total_control")):
+        if e in fields and t in fields and not (0 <= fields[e] <= fields[t]):
+            bad.update({e, t})
+    for k in ("total_intervention", "total_control", "n_intervention", "n_control", "sample_size"):
+        if k in fields and fields[k] <= 0:
+            bad.add(k)
+    for k in ("sd_intervention", "sd_control"):
+        if k in fields and fields[k] <= 0:
+            bad.add(k)
+    es, lo, hi = (fields.get(k) for k in ("effect_size", "effect_size_lower", "effect_size_upper"))
+    if None not in (es, lo, hi) and not (lo <= es <= hi):
+        bad.update({"effect_size", "effect_size_lower", "effect_size_upper"})
+    return sorted(bad)
+
+
 def extract_quantitative_data(review: dict, studies: list[dict]) -> dict:
     """
-    For each included study with abstract_text, use AI to extract quantitative
-    outcome data needed for meta-analysis.
-    Returns {study_id: {field: value, ...}} with extracted fields.
-    Processes studies one batch at a time (10 per call).
+    Exact, auditable extraction of the outcome data needed for the meta-analysis.
+
+    For every number the model must return the verbatim sentence it comes from. A
+    value is accepted only if that sentence is literally present in the study's
+    text AND the number is written in it, and the values of a study pass the
+    plausibility checks (events <= total, SD > 0, lower <= effect <= upper).
+
+    Returns {study_id: {"values": {field: value}, "evidence": {field: {...}},
+                        "rejected": [{"field", "value", "reason"}], "outcome": str}}.
     """
-    import json, re
+    import json
 
-    effect_measure = review.get("effect_measure", "OR")
-    pico = (
-        f"Población: {review.get('population', '')}\n"
-        f"Intervención: {review.get('intervention', '')}\n"
-        f"Comparación: {review.get('comparison', '')}\n"
-        f"Desenlaces: {review.get('outcomes', '')}"
-    )
+    effect_measure = (review.get("effect_measure") or "OR").upper()
+    kind = ("binary" if effect_measure in ("OR", "RR", "RD")
+            else "continuous" if effect_measure in ("MD", "SMD") else "precalculated")
+    fields = _EXTRACT_FIELDS_BY_MEASURE[kind]
+    outcome = (review.get("primary_outcomes") or review.get("outcomes") or "").strip()
 
-    # Determine what data to extract based on effect measure
-    if effect_measure in ("OR", "RR", "RD"):
-        data_template = (
-            '"events_intervention": N_o_null, "total_intervention": N_o_null, '
-            '"events_control": N_o_null, "total_control": N_o_null'
-        )
-        data_description = "número de eventos (casos) y total de participantes en grupo intervención y grupo control"
-    elif effect_measure in ("MD", "SMD"):
-        data_template = (
-            '"mean_intervention": N_o_null, "sd_intervention": N_o_null, "n_intervention": N_o_null, '
-            '"mean_control": N_o_null, "sd_control": N_o_null, "n_control": N_o_null'
-        )
-        data_description = "media, desviación estándar y n de cada grupo"
-    else:  # PRECALCULATED
-        data_template = (
-            '"effect_size": N_o_null, "effect_size_lower": N_o_null, "effect_size_upper": N_o_null, '
-            '"total_intervention": N_o_null, "total_control": N_o_null'
-        )
-        data_description = "tamaño de efecto, IC95% inferior y superior, y n por grupo"
-
-    client = _get_client()
-    results: dict = {}
-    batch_size = 10
-
-    # Only process studies with abstract text and no existing quantitative data
     candidates = [
         s for s in studies
         if s.get("included") is not False
-        and s.get("abstract_text")
-        and not any(s.get(f) for f in [
-            "events_intervention", "total_intervention",
-            "mean_intervention", "effect_size"
-        ])
+        and any(s.get(f) for f, _ in _EXTRACT_SOURCE_FIELDS)
+        and not any(s.get(f) is not None for f in fields)
     ]
+
+    client = _get_client()
+    schema = _extract_schema(fields)
+    results: dict = {}
+    batch_size = 5
 
     for i in range(0, len(candidates), batch_size):
         batch = candidates[i:i + batch_size]
-        entries = []
+        payload = []
         for s in batch:
-            abstract = (s.get("abstract_text") or "")[:800]
-            results_text = (s.get("study_results") or "")[:300]
-            label = s.get("study_label") or s.get("authors") or f"ID:{s['id']}"
-            entries.append(
-                f'  {{"id": {s["id"]}, "label": "{label}", '
-                f'"abstract": "{abstract}", "results": "{results_text}"}}'
-            )
+            texts = {f: s[f] for f, _ in _EXTRACT_SOURCE_FIELDS if s.get(f)}
+            payload.append({
+                "id": s["id"],
+                "estudio": s.get("study_label") or s.get("authors") or f"ID {s['id']}",
+                "diseño": s.get("study_design"),
+                "textos": texts,
+            })
 
         user = (
-            f"REVISIÓN: {review.get('title', '')}\nMEDIDA DE EFECTO: {effect_measure}\n"
-            f"PICO:\n{pico}\n\n"
-            f"Extrae del resumen/resultados de cada estudio: {data_description}.\n"
-            "Si un dato no está mencionado, usa null. Solo extrae lo que el texto diga explícitamente.\n\n"
-            f"ESTUDIOS:\n[{chr(10).join(entries)}]\n\n"
-            "Responde ÚNICAMENTE con JSON:\n"
-            '{"extractions": [{"id": N, ' + data_template + ', "sample_size": N_o_null}]}'
+            f"REVISIÓN: {review.get('title', '')}\n"
+            f"MEDIDA DE EFECTO: {effect_measure}\n"
+            f"DESENLACE A EXTRAER (definido por el autor): {outcome or 'desenlace principal de la revisión'}\n"
+            f"Intervención: {review.get('intervention', '')} | Comparador: {review.get('comparison', '')}\n\n"
+            f"CAMPOS: {', '.join(fields)} (y sample_size si se reporta el N total del estudio).\n"
+            "- *_intervention = grupo de la intervención de la revisión; *_control = grupo comparador.\n"
+            "- events_* = número de participantes con el evento; total_* = participantes analizados en ese grupo.\n"
+            "- effect_size/effect_size_lower/effect_size_upper = medida e IC95% tal como se reporta.\n\n"
+            "REGLAS ESTRICTAS:\n"
+            "1. Cada valor debe estar escrito en los textos del estudio. En \"quote\" copia, carácter "
+            "por carácter, la frase o fragmento (máx. ~300 caracteres) que contiene el número, y en "
+            "\"source\" indica de qué texto lo copiaste.\n"
+            "2. No calcules nada: si solo hay un porcentaje, no derives el número de eventos; si hay "
+            "error estándar o rango, no lo conviertas en DE; si hay mediana, no la uses como media.\n"
+            "3. Extrae solo el desenlace indicado. Si el estudio no lo reporta para ambos grupos, "
+            "devuelve values vacío. Si hay varios momentos de seguimiento, usa el principal declarado "
+            "y escribe cuál en \"outcome_reported\".\n"
+            "4. No asignes un grupo a intervención o control si el texto no permite saberlo.\n\n"
+            f"ESTUDIOS (JSON):\n{json.dumps(payload, ensure_ascii=False, indent=1)}\n\n"
+            "Devuelve una entrada por cada id recibido."
         )
 
-        message = client.messages.create(
-            model="claude-haiku-4-5-20251001",
-            max_tokens=4096,
-            system="Extrae datos numéricos de texto científico. Responde ÚNICAMENTE con JSON válido.",
+        with client.messages.stream(
+            model="claude-opus-5-5",
+            max_tokens=64000,
+            thinking={"type": "adaptive"},
+            output_config={
+                "effort": "high",
+                "format": {"type": "json_schema", "schema": schema},
+            },
+            system=_EXTRACT_SYSTEM,
             messages=[{"role": "user", "content": user}],
-        )
-        text = message.content[0].text.strip()
-        match = re.search(r'\{.*\}', text, re.DOTALL)
-        if match:
-            data = json.loads(match.group())
-            for ext in data.get("extractions", []):
-                sid = ext.pop("id", None)
-                if sid is not None:
-                    # Keep only non-null values
-                    clean = {k: v for k, v in ext.items() if v is not None}
-                    if clean:
-                        results[sid] = clean
+        ) as stream:
+            message = stream.get_final_message()
+
+        if message.stop_reason == "refusal":
+            raise RuntimeError("El modelo declinó extraer datos de este lote de estudios.")
+        if message.stop_reason == "max_tokens":
+            raise RuntimeError("La respuesta de extracción quedó truncada; reintenta.")
+
+        text = next(b.text for b in message.content if b.type == "text")
+        by_id = {s["id"]: s for s in batch}
+        for entry in json.loads(text)["studies"]:
+            study = by_id.get(entry["id"])
+            if not study:
+                continue
+            accepted, evidence, rejected = {}, {}, []
+            for v in entry["values"]:
+                field, value, quote, src = v["field"], v["value"], v["quote"].strip(), v["source"]
+                source_text = study.get(src) or ""
+                if not quote or _norm_text(quote) not in _norm_text(source_text):
+                    rejected.append({"field": field, "value": value,
+                                     "reason": "la cita no aparece textualmente en el estudio"})
+                    continue
+                if not _number_in_quote(value, quote):
+                    rejected.append({"field": field, "value": value,
+                                     "reason": "el número no está escrito en la cita (valor derivado)"})
+                    continue
+                if field in _INT_EXTRACT_FIELDS:
+                    if float(value) != int(value):
+                        rejected.append({"field": field, "value": value, "reason": "debe ser un entero"})
+                        continue
+                    value = int(value)
+                if field in accepted and accepted[field] != value:
+                    rejected.append({"field": field, "value": value, "reason": "valores contradictorios"})
+                    accepted.pop(field)
+                    evidence.pop(field, None)
+                    continue
+                accepted[field] = value
+                evidence[field] = {"value": value, "quote": quote, "source": src,
+                                   "outcome": entry["outcome_reported"]}
+            for field in _check_consistency(accepted):
+                rejected.append({"field": field, "value": accepted.pop(field),
+                                 "reason": "inconsistente con los demás datos del estudio"})
+                evidence.pop(field, None)
+            # A group is only usable with all its numbers: drop incomplete arms.
+            groups = ([("events_intervention", "total_intervention"), ("events_control", "total_control")]
+                      if kind == "binary" else
+                      [("mean_intervention", "sd_intervention", "n_intervention"),
+                       ("mean_control", "sd_control", "n_control")]
+                      if kind == "continuous" else
+                      [("effect_size", "effect_size_lower", "effect_size_upper")])
+            for g in groups:
+                present = [f for f in g if f in accepted]
+                if present and len(present) < len(g):
+                    for f in present:
+                        rejected.append({"field": f, "value": accepted.pop(f),
+                                         "reason": "grupo incompleto (faltan datos verificables del mismo brazo)"})
+                        evidence.pop(f, None)
+            results[entry["id"]] = {"values": accepted, "evidence": evidence, "rejected": rejected,
+                                    "outcome": entry["outcome_reported"]}
 
     return results
 
@@ -817,56 +973,3 @@ def interpret_rob_plot(review: dict, studies: list) -> str:
         messages=[{"role": "user", "content": user}],
     )
     return msg.content[0].text.strip()
-
-
-def generate_prisma_autofill(review: dict, study_count: int) -> dict:
-    """Use AI to generate realistic PRISMA 2020 flow numbers based on PICO and included studies."""
-    import json, re
-
-    pico = (
-        f"Población: {review.get('population', '')}\n"
-        f"Intervención: {review.get('intervention', '')}\n"
-        f"Comparación: {review.get('comparison', '')}\n"
-        f"Desenlaces: {review.get('outcomes', '')}"
-    )
-    user = (
-        f"TÍTULO: {review.get('title', 'Revisión sistemática')}\n\n"
-        f"PICO:\n{pico}\n\n"
-        f"ESTUDIOS INCLUIDOS (final): {study_count} estudios fueron incluidos en este metaanálisis.\n\n"
-        "Genera números realistas y coherentes para el diagrama de flujo PRISMA 2020. "
-        "Los números deben ser lógicos: registros identificados >> cribados > evaluados > incluidos. "
-        "Razones de exclusión deben ser específicas al PICO de esta revisión.\n\n"
-        "Responde ÚNICAMENTE con un JSON válido, sin comentarios, sin texto adicional:\n"
-        "{\n"
-        '  "prisma_db_names": "PubMed=N,Scopus=N,EMBASE=N,Cochrane CENTRAL=N",\n'
-        '  "prisma_other_sources": N,\n'
-        '  "prisma_duplicates_removed": N,\n'
-        '  "prisma_other_removed": N,\n'
-        '  "prisma_screened": N,\n'
-        '  "prisma_excluded_screening": N,\n'
-        '  "prisma_sought": N,\n'
-        '  "prisma_not_retrieved": N,\n'
-        '  "prisma_assessed": N,\n'
-        '  "prisma_excluded_eligibility": N,\n'
-        '  "prisma_exclusion_reasons": "Razón específica 1=N,Razón específica 2=N,Razón específica 3=N",\n'
-        f'  "prisma_included": {study_count},\n'
-        f'  "prisma_reports_included": {study_count}\n'
-        "}\n"
-        f"El valor de prisma_included DEBE ser exactamente {study_count}. "
-        "Usa razones de exclusión en español relevantes al PICO."
-    )
-
-    # Use a direct call without extended thinking for structured JSON output
-    client = _get_client()
-    message = client.messages.create(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=1024,
-        system="Eres un experto en revisiones sistemáticas. Responde ÚNICAMENTE con JSON válido, sin texto adicional.",
-        messages=[{"role": "user", "content": user}],
-    )
-    result_text = message.content[0].text.strip()
-
-    match = re.search(r'\{.*\}', result_text, re.DOTALL)
-    if match:
-        return json.loads(match.group())
-    raise ValueError(f"La IA no devolvió JSON válido: {result_text[:200]}")

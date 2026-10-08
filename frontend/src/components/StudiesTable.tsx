@@ -4,7 +4,7 @@ import toast from 'react-hot-toast'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   deleteStudy, uploadStudies, createStudy, mergeStudyDatabases, aiScreenStudies, aiExtractData, updateStudy, resetScreening, API_BASE,
-  type Study,
+  type Study, type ExtractionReportItem,
 } from '../services/api'
 import StudiesDatabaseModal from './StudiesDatabaseModal'
 
@@ -28,6 +28,7 @@ export default function StudiesTable({ reviewId, studies }: Props) {
   const [showDb, setShowDb] = useState(false)
   const [newStudy, setNewStudy] = useState<Partial<Study>>({ included: true })
   const [importSource, setImportSource] = useState('')
+  const [extractReport, setExtractReport] = useState<ExtractionReportItem[] | null>(null)
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['review', reviewId] })
@@ -100,6 +101,7 @@ export default function StudiesTable({ reviewId, studies }: Props) {
     mutationFn: () => aiExtractData(reviewId),
     onSuccess: (res) => {
       toast.success(res.message)
+      setExtractReport(res.report)
       invalidate()
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || 'Error en extracción de datos'),
@@ -257,7 +259,7 @@ export default function StudiesTable({ reviewId, studies }: Props) {
               <button
                 type="button"
                 onClick={() => {
-                  if (confirm('¿Extraer datos numéricos (eventos, participantes, medias) desde los resúmenes con IA? Solo actualiza campos vacíos.'))
+                  if (confirm('¿Extraer datos numéricos (eventos, participantes, medias) desde los textos de cada estudio con IA? Cada número debe venir con su cita textual, que se verifica contra el texto; lo que no se pueda verificar se descarta. Solo actualiza campos vacíos.'))
                     extractMutation.mutate()
                 }}
                 disabled={extractMutation.isPending || screenMutation.isPending}
@@ -268,6 +270,35 @@ export default function StudiesTable({ reviewId, studies }: Props) {
                 {extractMutation.isPending ? 'Extrayendo datos...' : 'Extraer datos con IA'}
               </button>
             </div>
+
+            {extractReport && (
+              <div className="px-5 py-3 border-b border-gray-100 bg-white">
+                <div className="flex items-center justify-between mb-2">
+                  <p className="text-xs font-semibold text-gray-700">Informe de extracción verificada</p>
+                  <button type="button" className="text-xs text-gray-400 hover:text-gray-600" onClick={() => setExtractReport(null)}>Cerrar</button>
+                </div>
+                {extractReport.length === 0 && (
+                  <p className="text-xs text-gray-400">No había estudios incluidos con texto y sin datos numéricos.</p>
+                )}
+                <ul className="space-y-1 max-h-64 overflow-y-auto">
+                  {extractReport.map(r => (
+                    <li key={r.id} className="text-xs">
+                      <span className="font-medium text-gray-800">{r.study}</span>
+                      {r.outcome && <span className="text-gray-400"> · {r.outcome}</span>}
+                      {Object.keys(r.written).length > 0 ? (
+                        <span className="text-green-700"> · guardado: {Object.entries(r.written).map(([k, v]) => `${k}=${v}`).join(', ')}</span>
+                      ) : (
+                        <span className="text-gray-400"> · sin datos verificables</span>
+                      )}
+                      {r.rejected.length > 0 && (
+                        <span className="text-red-600"> · descartado: {r.rejected.map(x => `${x.field}=${x.value} (${x.reason})`).join('; ')}</span>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                <p className="text-[10px] text-gray-400 mt-1">La cita de origen de cada dato queda guardada y se ve en el Gestor de referencias.</p>
+              </div>
+            )}
 
             {/* Table */}
             <div className="overflow-x-auto">

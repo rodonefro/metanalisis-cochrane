@@ -8,6 +8,7 @@ import SectionEditor from '../components/SectionEditor'
 import StudiesTable from '../components/StudiesTable'
 import AnalysisPanel from '../components/AnalysisPanel'
 import PrismaPanel from '../components/PrismaPanel'
+import ReferenceManager from '../components/ReferenceManager'
 import ReferencesSection from '../components/ReferencesSection'
 
 const SECTIONS = [
@@ -344,6 +345,11 @@ export default function ReviewEditor() {
             })}
           </div>
         </div>
+      </div>
+
+      {/* Reference manager (Rayyan / Zotero) */}
+      <div className="mb-4">
+        <ReferenceManager reviewId={reviewId} studies={review.studies || []} />
       </div>
 
       {/* Studies */}

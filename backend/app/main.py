@@ -6,7 +6,7 @@ from sqlalchemy import inspect as sa_inspect
 
 from .database import engine, Base
 from .config import settings
-from .routers import reviews, studies, analysis, generate, export
+from .routers import reviews, studies, analysis, generate, export, references
 
 Base.metadata.create_all(bind=engine)
 
@@ -41,6 +41,19 @@ def _migrate_db():
         ("reasoning_study_design", "TEXT"),
         ("source_database", "VARCHAR(200)"),
         ("screening_reviewed", "BOOLEAN DEFAULT FALSE"),
+        ("screening_decision", "VARCHAR(20)"),
+        ("screening_stage", "VARCHAR(20)"),
+        ("full_text_status", "VARCHAR(20)"),
+        ("all_sources", "TEXT"),
+        ("pmid", "VARCHAR(50)"),
+        ("keywords", "TEXT"),
+        ("extraction_evidence", "TEXT"),
+    ]
+    new_search_cols = [
+        ("source_type", "VARCHAR(20) DEFAULT 'database'"),
+        ("records_imported", "INTEGER DEFAULT 0"),
+        ("duplicates_found", "INTEGER DEFAULT 0"),
+        ("created_at", "TIMESTAMP"),
     ]
     new_review_cols = [
         ("prisma_db_names", "TEXT"),
@@ -67,6 +80,10 @@ def _migrate_db():
 
     existing_study = {col["name"] for col in inspector.get_columns("studies")}
     existing_review = {col["name"] for col in inspector.get_columns("reviews")}
+    existing_search = (
+        {col["name"] for col in inspector.get_columns("search_databases")}
+        if inspector.has_table("search_databases") else None
+    )
 
     adding_screening_reviewed = "screening_reviewed" not in existing_study
 
@@ -77,6 +94,10 @@ def _migrate_db():
         for col, typ in new_review_cols:
             if col not in existing_review:
                 conn.execute(sa.text(f"ALTER TABLE reviews ADD COLUMN {col} {typ}"))
+        if existing_search is not None:
+            for col, typ in new_search_cols:
+                if col not in existing_search:
+                    conn.execute(sa.text(f"ALTER TABLE search_databases ADD COLUMN {col} {typ}"))
         if adding_screening_reviewed:
             # Studies that already existed before this column was introduced were
             # already curated by hand (or by an earlier AI screen run). Mark them
@@ -109,6 +130,7 @@ app.include_router(studies.router)
 app.include_router(analysis.router)
 app.include_router(generate.router)
 app.include_router(export.router)
+app.include_router(references.router)
 
 _static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(_static_dir):

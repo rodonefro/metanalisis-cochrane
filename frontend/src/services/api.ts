@@ -134,6 +134,41 @@ export interface Study {
   reasoning_study_design: string | null
   source_database: string | null
   notes: string | null
+  // Reference manager / PRISMA
+  screening_decision: 'include' | 'exclude' | 'maybe' | null
+  screening_stage: 'title_abstract' | 'full_text' | null
+  full_text_status: 'retrieved' | 'not_retrieved' | null
+  all_sources: string | null
+  pmid: string | null
+  keywords: string | null
+  extraction_evidence: string | null
+}
+
+export interface SearchSource {
+  id: number
+  review_id: number
+  database_name: string
+  search_string: string | null
+  search_date: string | null
+  results_count: number | null
+  source_type: 'database' | 'register' | 'other'
+  records_imported: number
+  duplicates_found: number
+}
+
+export interface PrismaFlow {
+  fields: Record<string, string | number | null>
+  sources: { name: string; n: number; type: 'database' | 'other' }[]
+  identified: number
+  warnings: string[]
+}
+
+export interface ExtractionReportItem {
+  id: number
+  study: string
+  outcome: string
+  written: Record<string, number>
+  rejected: { field: string; value: number; reason: string }[]
 }
 
 export interface Analysis {
@@ -210,15 +245,57 @@ export const getRobPlot = (reviewId: number) =>
 
 // PRISMA 2020
 export const getPrismaDiagram = (reviewId: number) =>
-  api.get<{ prisma_b64: string }>(`/reviews/${reviewId}/analysis/prisma`).then(r => r.data)
-export const autofillPrisma = (reviewId: number) =>
-  api.post<{ message: string; data: Record<string, unknown> }>(`/reviews/${reviewId}/analysis/prisma/autofill`).then(r => r.data)
+  api.get<PrismaFlow & { prisma_b64: string }>(`/reviews/${reviewId}/analysis/prisma`).then(r => r.data)
+export const computePrisma = (reviewId: number) =>
+  api.post<PrismaFlow>(`/reviews/${reviewId}/analysis/prisma/compute`).then(r => r.data)
+
+// Search log (databases where the search was run)
+export const listSearches = (reviewId: number) =>
+  api.get<SearchSource[]>(`/reviews/${reviewId}/searches`).then(r => r.data)
+export const createSearch = (reviewId: number, data: Partial<SearchSource>) =>
+  api.post<SearchSource>(`/reviews/${reviewId}/searches`, data).then(r => r.data)
+export const updateSearch = (reviewId: number, id: number, data: Partial<SearchSource>) =>
+  api.put<SearchSource>(`/reviews/${reviewId}/searches/${id}`, data).then(r => r.data)
+export const deleteSearch = (reviewId: number, id: number) =>
+  api.delete(`/reviews/${reviewId}/searches/${id}`)
+
+// Reference manager (Rayyan / Zotero)
+export const importReferences = (
+  reviewId: number,
+  file: File,
+  meta: { database_name: string; source_type: string; search_string?: string; search_date?: string; results_count?: number },
+) => {
+  const form = new FormData()
+  form.append('file', file)
+  form.append('database_name', meta.database_name)
+  form.append('source_type', meta.source_type)
+  if (meta.search_string) form.append('search_string', meta.search_string)
+  if (meta.search_date) form.append('search_date', meta.search_date)
+  if (meta.results_count != null) form.append('results_count', String(meta.results_count))
+  return api.post<{
+    records: number; added: number; duplicates_merged: number; format: string; prisma_warnings: string[]
+  }>(`/reviews/${reviewId}/references/import`, form).then(r => r.data)
+}
+export const exportReferences = (reviewId: number, fmt: 'ris' | 'bib' | 'csv', scope: string) =>
+  api.get(`/reviews/${reviewId}/references/export`, { params: { fmt, scope }, responseType: 'blob' }).then(r => r.data as Blob)
+export const setScreeningDecision = (
+  reviewId: number,
+  studyId: number,
+  data: {
+    decision?: 'include' | 'exclude' | 'maybe' | null
+    stage?: 'title_abstract' | 'full_text' | null
+    reason?: string | null
+    full_text_status?: 'retrieved' | 'not_retrieved' | '' | null
+    notes?: string | null
+    source_database?: string
+  },
+) => api.post<Study>(`/reviews/${reviewId}/references/${studyId}/decision`, data).then(r => r.data)
 export const aiScreenStudies = (reviewId: number) =>
   api.post<{ message: string; included: number; excluded: number; uncertain: number; skipped_already_reviewed: number }>(`/reviews/${reviewId}/analysis/ai-screen`).then(r => r.data)
 export const resetScreening = (reviewId: number) =>
   api.post<{ message: string; reset: number }>(`/reviews/${reviewId}/analysis/reset-screening`).then(r => r.data)
 export const aiExtractData = (reviewId: number) =>
-  api.post<{ message: string; updated: number; total_included: number }>(`/reviews/${reviewId}/analysis/ai-extract`).then(r => r.data)
+  api.post<{ message: string; updated: number; total_included: number; report: ExtractionReportItem[] }>(`/reviews/${reviewId}/analysis/ai-extract`).then(r => r.data)
 
 // Export
 export const exportPdf = (reviewId: number) =>

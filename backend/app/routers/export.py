@@ -20,6 +20,7 @@ from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 from ..database import get_db
 from ..models import Review, Study, Analysis
 from ..services.plots import generate_prisma_2020, generate_grade_table
+from ..services.prisma import sync_prisma, prisma_plot_kwargs
 
 router = APIRouter(prefix="/reviews/{review_id}/export", tags=["export"])
 
@@ -481,25 +482,10 @@ def export_pdf(review_id: int, db: Session = Depends(get_db)):
     _sub(story, "4.1.1", "Results of the search", None, st, level=3)
 
     # PRISMA diagram
-    has_prisma = any([review.prisma_db_names, review.prisma_screened,
-                      review.prisma_assessed, review.prisma_included])
+    has_prisma = bool(review.studies)
     if has_prisma:
         try:
-            prisma_b64 = generate_prisma_2020(
-                db_names=review.prisma_db_names,
-                other_sources=review.prisma_other_sources,
-                duplicates_removed=review.prisma_duplicates_removed,
-                other_removed=review.prisma_other_removed,
-                screened=review.prisma_screened,
-                excluded_screening=review.prisma_excluded_screening,
-                sought=review.prisma_sought,
-                not_retrieved=review.prisma_not_retrieved,
-                assessed=review.prisma_assessed,
-                excluded_eligibility=review.prisma_excluded_eligibility,
-                exclusion_reasons=review.prisma_exclusion_reasons,
-                included=review.prisma_included,
-                reports_included=review.prisma_reports_included,
-            )
+            prisma_b64 = generate_prisma_2020(**prisma_plot_kwargs(sync_prisma(db, review)["fields"]))
             img = _b64_to_image(prisma_b64, 13)
             if img:
                 story.append(img)
@@ -987,25 +973,10 @@ def export_docx(review_id: int, db: Session = Depends(get_db)):
                    or (f"Se incluyeron {len(studies)} estudios en esta revisión." if studies else "[Pendiente]"))
 
     # PRISMA diagram
-    has_prisma = any([review.prisma_db_names, review.prisma_screened,
-                      review.prisma_assessed, review.prisma_included])
+    has_prisma = bool(review.studies)
     if has_prisma:
         try:
-            prisma_b64 = generate_prisma_2020(
-                db_names=review.prisma_db_names,
-                other_sources=review.prisma_other_sources,
-                duplicates_removed=review.prisma_duplicates_removed,
-                other_removed=review.prisma_other_removed,
-                screened=review.prisma_screened,
-                excluded_screening=review.prisma_excluded_screening,
-                sought=review.prisma_sought,
-                not_retrieved=review.prisma_not_retrieved,
-                assessed=review.prisma_assessed,
-                excluded_eligibility=review.prisma_excluded_eligibility,
-                exclusion_reasons=review.prisma_exclusion_reasons,
-                included=review.prisma_included,
-                reports_included=review.prisma_reports_included,
-            )
+            prisma_b64 = generate_prisma_2020(**prisma_plot_kwargs(sync_prisma(db, review)["fields"]))
             _docx_embed_b64_image(d, prisma_b64, 14, "Figura 1. Diagrama de flujo PRISMA 2020.")
         except Exception:
             pass

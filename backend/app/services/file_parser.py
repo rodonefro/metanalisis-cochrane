@@ -310,8 +310,8 @@ _COLUMN_MAP = {
     "research_topics":              "key_findings",
     "research topics":              "key_findings",
     "topics":                       "key_findings",
-    "keywords":                     "key_findings",
-    "keyword":                      "key_findings",
+    "keywords":                     "keywords",
+    "keyword":                      "keywords",
 
     "tldr":                         "findings",
     "tl;dr":                        "findings",
@@ -324,8 +324,8 @@ _COLUMN_MAP = {
     "citation_count":               "notes",
 
     "arxiv_id":                     "doi",
-    "pmid":                         "doi",
-    "pubmed_id":                    "doi",
+    "pmid":                         "pmid",
+    "pubmed_id":                    "pmid",
     "semantic_scholar_id":          "notes",
 
     "open_access":                  "notes",
