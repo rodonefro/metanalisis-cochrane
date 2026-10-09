@@ -67,8 +67,8 @@ def generate_text(
         {c.name: getattr(s, c.name) for c in s.__table__.columns}
         for s in studies
     ]
-    studies_list = [s for s in all_studies if s["included"]]
-    excluded_list = [s for s in all_studies if not s["included"]]
+    studies_list = [s for s in all_studies if s["included"] and s["screening_reviewed"]]
+    excluded_list = [s for s in all_studies if not s["included"] and s["screening_reviewed"]]
 
     # Load latest meta-analysis results
     meta_results = None

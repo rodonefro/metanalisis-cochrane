@@ -9,6 +9,8 @@ from ..schemas import AnalysisOut
 from ..services.statistics import run_meta_analysis, result_to_dict, meta_result_from_dict
 from ..services.plots import generate_forest_plot, generate_funnel_plot, generate_rob_traffic_light, generate_prisma_2020, generate_grade_table  # used by on-demand endpoints
 from ..services.prisma import sync_prisma, prisma_plot_kwargs
+from ..services.eligibility import eligible_studies, pending_count, find_duplicates
+from ..services.plots import _short_label
 from ..services.ai_generator import (
     screen_studies_with_ai, extract_quantitative_data, eligibility_block,
     assess_risk_of_bias, ROB_DOMAIN_KEYS,
@@ -18,13 +20,10 @@ from ..services.ai_generator import (
 router = APIRouter(prefix="/reviews/{review_id}/analysis", tags=["analysis"])
 
 
-def _study_dicts(review_id: int, db: Session, only_included: bool = True) -> list[dict]:
-    q = db.query(Study).filter(Study.review_id == review_id)
-    if only_included:
-        q = q.filter(Study.included == True)  # noqa: E712
+def _study_dicts(review_id: int, db: Session) -> list[dict]:
     return [
         {c.name: getattr(s, c.name) for c in s.__table__.columns}
-        for s in q.all()
+        for s in eligible_studies(db, review_id)
     ]
 
 
@@ -34,9 +33,18 @@ def run_analysis(review_id: int, db: Session = Depends(get_db)):
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")
 
+    pending = pending_count(db, review_id)
+    if pending:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Hay {pending} estudio(s) sin cribar. Ejecuta el cribado (o decide manualmente su "
+                "inclusión) antes del metaanálisis: solo se analizan estudios que cumplen los criterios."
+            ),
+        )
     study_data = _study_dicts(review_id, db)
     if not study_data:
-        raise HTTPException(status_code=422, detail="No studies found for this review.")
+        raise HTTPException(status_code=422, detail="No hay estudios incluidos tras el cribado para analizar.")
 
     effect_measure = review.effect_measure or "OR"
     model_type = review.model_type or "random"
@@ -298,13 +306,28 @@ def ai_screen_studies(review_id: int, db: Session = Depends(get_db)):
             ),
         )
 
+    duplicates = find_duplicates(all_studies, pending_studies)
+    for study in pending_studies:
+        original = duplicates.get(study.id)
+        if original is None:
+            continue
+        study.included = False
+        study.screening_decision = "exclude"
+        study.screening_stage = "title_abstract"
+        study.screening_reviewed = True
+        study.exclusion_reason = (
+            f"Duplicado: mismo DOI o título que el registro "
+            f"'{_short_label(original.study_label or original.title or str(original.id))}'"
+        )
+    pending_studies = [s for s in pending_studies if s.id not in duplicates]
+
     studies_list = [
         {c.name: getattr(s, c.name) for c in s.__table__.columns}
         for s in pending_studies
     ]
 
     try:
-        decisions = screen_studies_with_ai(review_dict, studies_list)
+        decisions = screen_studies_with_ai(review_dict, studies_list) if studies_list else {}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Error en cribado IA: {exc}")
 
@@ -341,7 +364,8 @@ def ai_screen_studies(review_id: int, db: Session = Depends(get_db)):
     return {
         "message": (
             f"Cribado completado: {included_count} incluidos, {excluded_count} excluidos, "
-            f"{uncertain_count} requieren revisión a texto completo"
+            + (f"{len(duplicates)} duplicados, " if duplicates else "")
+            + f"{uncertain_count} requieren revisión a texto completo"
             + (f", {no_decision} sin decisión (quedan pendientes)" if no_decision else "")
             + f" ({already_reviewed} ya tenían decisión previa y no se modificaron)"
         ),
@@ -359,7 +383,7 @@ def ai_assess_rob(review_id: int, db: Session = Depends(get_db)):
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")
 
-    included = db.query(Study).filter(Study.review_id == review_id, Study.included == True).all()  # noqa: E712
+    included = eligible_studies(db, review_id)
     if not included:
         raise HTTPException(status_code=422, detail="No hay estudios incluidos para evaluar el riesgo de sesgo.")
 
@@ -431,10 +455,7 @@ def ai_extract_data(review_id: int, db: Session = Depends(get_db)):
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")
 
-    studies = db.query(Study).filter(
-        Study.review_id == review_id,
-        Study.included == True,  # noqa: E712
-    ).all()
+    studies = eligible_studies(db, review_id)
     if not studies:
         raise HTTPException(status_code=422, detail="No hay estudios incluidos para extraer datos.")
 

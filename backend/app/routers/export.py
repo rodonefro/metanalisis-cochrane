@@ -21,8 +21,9 @@ from ..database import get_db
 from ..models import Review, Study, Analysis
 from ..services.plots import (
     generate_prisma_2020, generate_grade_table, generate_forest_plot,
-    generate_funnel_plot, generate_rob_traffic_light,
+    generate_funnel_plot, generate_rob_traffic_light, _short_label,
 )
+from ..services.eligibility import eligible_studies, excluded_studies
 from ..services.statistics import meta_result_from_dict
 from ..services.prisma import sync_prisma, prisma_plot_kwargs
 
@@ -46,8 +47,30 @@ def _safe(text) -> str:
     return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
+_MD_HEADING = re.compile(r"^\s{0,3}#{1,6}\s+(.+?)\s*#*\s*$")
+_MD_BULLET = re.compile(r"^\s*[-*•]\s+")
+_MD_BOLD = re.compile(r"\*\*(?=\S)(.+?)(?<=\S)\*\*|__(?=\S)(.+?)(?<=\S)__")
+_MD_ITALIC = re.compile(r"(?<![\w*])\*(?=\S)([^*\n]+?)(?<=\S)\*(?![\w*])")
+
+
+def _md(text) -> str:
+    """Escape text and turn the Markdown the AI writes (headings, bold, italics, bullets,
+    line breaks) into ReportLab paragraph markup, so no stray asterisks reach the PDF."""
+    lines = []
+    for line in _safe(text).replace("\r\n", "\n").split("\n"):
+        h = _MD_HEADING.match(line)
+        if h:
+            line = f"**{h.group(1)}**"
+        line = _MD_BULLET.sub("• ", line)
+        line = _MD_BOLD.sub(lambda m: f"<b>{m.group(1) or m.group(2)}</b>", line)
+        line = _MD_ITALIC.sub(r"<i>\1</i>", line)
+        lines.append(line.replace("**", ""))
+    html = re.sub(r"(<br/>){3,}", "<br/><br/>", "<br/>".join(lines))
+    return re.sub(r"^(\s|<br/>)+|(\s|<br/>)+$", "", html)
+
+
 def _para(text, style) -> Paragraph:
-    return Paragraph(_safe(text), style)
+    return Paragraph(_md(text), style)
 
 
 def _trunc(text, max_chars: int) -> str:
@@ -226,7 +249,7 @@ def _sub(story, num: str, title: str, text: str | None, st: dict, level: int = 2
 
 def _field(story, label: str, value: str | None, st: dict):
     if value:
-        story.append(_para(f"<b>{label}:</b> {_safe(value)}", st["body_sm"]))
+        story.append(_para(f"**{label}:** {value}", st["body_sm"]))
 
 
 def _hr(story, color=C_LBLUE):
@@ -239,63 +262,103 @@ _ROB_LABEL_ES = {"low": "Bajo", "some_concerns": "Algunas preocupaciones", "high
 _ROB_COLOR = {"low": C_GREEN, "some_concerns": C_ORANGE, "high": C_RED}
 
 
-def _study_table(studies: list, st: dict) -> list:
-    """
-    Build one self-contained card per included study, stacking each field as
-    its own full-width row instead of cramming every study into one column
-    of a wide table — a single ~16cm-wide column lets long free-text fields
-    (intervención, resultados) wrap and stay fully readable instead of being
-    squeezed and truncated to fit a narrow horizontal cell.
-    """
-    label_style = ParagraphStyle("scLabel", fontSize=8.5, fontName="Helvetica-Bold",
-                                  textColor=C_DBLUE, leading=11)
-    value_style = ParagraphStyle("scValue", fontSize=8.5, leading=12, alignment=TA_JUSTIFY)
-    head_style = ParagraphStyle("scHead", fontSize=9.5, fontName="Helvetica-Bold",
-                                 textColor=C_WHITE, leading=12)
+def _study_name(s) -> str:
+    label = s.study_label or f"{s.authors or '—'} {s.year or ''}"
+    name = _short_label(label)
+    if s.year and str(s.year) not in name:
+        name = f"{name} {s.year}"
+    return name
 
-    blocks = []
-    for i, s in enumerate(studies, 1):
-        authors = s.authors or "—"
-        year = str(s.year) if s.year else "—"
-        title_text = s.study_label or f"{authors} ({year})"
-        n = (s.total_intervention or 0) + (s.total_control or 0) or (s.sample_size or "—")
-        design = s.study_design or "—"
-        interv = s.group_comparison or s.patient_population or "—"
-        outc = s.survival_outcomes or s.key_findings or s.study_results or s.findings or "—"
-        rob_raw = s.rob_overall
-        rob_text = _ROB_LABEL_ES.get(rob_raw, "—" if not rob_raw else rob_raw)
-        rob_color = _ROB_COLOR.get(rob_raw, colors.HexColor("#999999"))
 
-        rows = [
-            [Paragraph(_safe(f"{i}. {_trunc(title_text, 120)}"), head_style), ""],
-            ["Autores", Paragraph(_safe(_trunc(authors, 300)), value_style)],
-            ["Año", year],
-            ["Tipo de estudio", Paragraph(_safe(_trunc(design, 300)), value_style)],
-            ["Participantes (N)", str(n)],
-            ["Intervención", Paragraph(_safe(_trunc(interv, 800)), value_style)],
-            ["Resultados", Paragraph(_safe(_trunc(outc, 800)), value_style)],
-            ["Riesgo de sesgo", Paragraph(_safe(rob_text), ParagraphStyle(
-                "scRob", parent=value_style, textColor=rob_color, fontName="Helvetica-Bold"))],
-        ]
+def _rule_table(rows: list, col_widths: list, font_size: float = 7.2) -> Table:
+    """Journal-style table: header rule, light zebra rows, no vertical lines."""
+    tbl = Table(rows, colWidths=col_widths, repeatRows=1)
+    tbl.setStyle(TableStyle([
+        ("LINEABOVE",     (0, 0), (-1, 0), 1.2, C_BLACK),
+        ("LINEBELOW",     (0, 0), (-1, 0), 0.7, C_BLACK),
+        ("LINEBELOW",     (0, -1), (-1, -1), 1.2, C_BLACK),
+        ("ROWBACKGROUNDS", (0, 1), (-1, -1), [C_WHITE, colors.HexColor("#F3F6F9")]),
+        ("VALIGN",        (0, 0), (-1, -1), "TOP"),
+        ("TOPPADDING",    (0, 0), (-1, -1), 2.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 2.5),
+        ("LEFTPADDING",   (0, 0), (-1, -1), 3),
+        ("RIGHTPADDING",  (0, 0), (-1, -1), 3),
+    ]))
+    return tbl
 
-        tbl = Table(rows, colWidths=[3.6 * cm, 12.9 * cm])
-        tbl.setStyle(TableStyle([
-            ("SPAN",          (0, 0), (-1, 0)),
-            ("BACKGROUND",    (0, 0), (-1, 0), C_BLUE),
-            ("TOPPADDING",    (0, 0), (-1, 0), 5),
-            ("BOTTOMPADDING", (0, 0), (-1, 0), 5),
-            ("BACKGROUND",    (0, 1), (0, -1), C_LBLUE),
-            ("FONTNAME",      (0, 1), (0, -1), "Helvetica-Bold"),
-            ("FONTSIZE",      (0, 1), (0, -1), 8.5),
-            ("VALIGN",        (0, 0), (-1, -1), "TOP"),
-            ("GRID",          (0, 0), (-1, -1), 0.4, colors.HexColor("#cccccc")),
-            ("TOPPADDING",    (0, 1), (-1, -1), 4),
-            ("BOTTOMPADDING", (0, 1), (-1, -1), 4),
-            ("LEFTPADDING",   (0, 0), (-1, -1), 7),
-            ("RIGHTPADDING",  (0, 0), (-1, -1), 7),
-        ]))
-        blocks.append(KeepTogether([tbl, Spacer(1, 0.3 * cm)]))
-    return blocks
+
+def _characteristics_table(studies: list, st: dict) -> list:
+    """'Characteristics of included studies': one compact row per study, landscape page."""
+    cell = ParagraphStyle("ctCell", fontSize=7.2, leading=8.6)
+    head = ParagraphStyle("ctHead", parent=cell, fontName="Helvetica-Bold")
+    rob_style = {k: ParagraphStyle(f"ctRob{k}", parent=cell, fontName="Helvetica-Bold", textColor=c)
+                 for k, c in _ROB_COLOR.items()}
+
+    def P(text, style=cell, limit=None):
+        text = _trunc(text, limit) if limit else (str(text) if text not in (None, "") else "—")
+        return Paragraph(_safe(text), style)
+
+    header = [P(h, head) for h in (
+        "Estudio", "País / ámbito", "Diseño", "N", "Población",
+        "Intervención vs. comparador", "Resultados principales", "RoB")]
+    rows = [header]
+    for s in studies:
+        n = (s.total_intervention or 0) + (s.total_control or 0) or s.sample_size
+        population = s.patient_population or s.inclusion_criteria
+        if s.age_mean and population:
+            population = f"{population} (edad media {s.age_mean:g})"
+        results = s.key_findings or s.survival_outcomes or s.study_results or s.findings
+        rows.append([
+            P(_study_name(s), head),
+            P(s.country or s.setting, limit=40),
+            P(s.study_design, limit=60),
+            P(n),
+            P(population, limit=150),
+            P(s.group_comparison, limit=150),
+            P(results, limit=260),
+            P(_ROB_LABEL_ES.get(s.rob_overall, "Sin evaluar"), rob_style.get(s.rob_overall, cell)),
+        ])
+
+    widths = [c * cm for c in (3.3, 2.0, 2.4, 1.1, 4.2, 4.2, 5.6, 2.5)]  # 25.3 cm landscape frame
+    foot = ParagraphStyle("ctFoot", fontSize=6.8, leading=8.5, textColor=C_GREY)
+    return [
+        _para("Table 1. Characteristics of included studies", st["label"]),
+        Spacer(1, 0.15 * cm),
+        _rule_table(rows, widths),
+        Spacer(1, 0.15 * cm),
+        Paragraph(
+            "N: participantes analizados; RoB: riesgo de sesgo global (Bajo / Algunas preocupaciones / Alto); "
+            "—: no reportado en la información disponible. Textos abreviados; el detalle completo de cada "
+            "estudio está en la base de datos de la revisión.", foot),
+    ]
+
+
+def _excluded_table(studies: list, st: dict) -> list:
+    """'Characteristics of excluded studies': study and reason for exclusion."""
+    cell = ParagraphStyle("exCell", fontSize=7.8, leading=9.6)
+    head = ParagraphStyle("exHead", parent=cell, fontName="Helvetica-Bold")
+    rows = [[Paragraph("Estudio", head), Paragraph("Motivo de exclusión", head)]]
+    for s in studies:
+        reason = s.exclusion_reason or "Motivo no registrado"
+        rows.append([Paragraph(_safe(_study_name(s)), head), Paragraph(_safe(_trunc(reason, 300)), cell)])
+    return [
+        _para("Table 2. Characteristics of excluded studies", st["label"]),
+        Spacer(1, 0.15 * cm),
+        _rule_table(rows, [4.6 * cm, 12.0 * cm]),
+    ]
+
+
+def _exclusion_summary(studies: list) -> str:
+    from collections import Counter
+    if not studies:
+        return "No se excluyeron estudios tras el cribado."
+    reasons = Counter(
+        (s.exclusion_reason or "Motivo no registrado").split(":", 1)[0].split("—", 1)[0].strip()[:90]
+        for s in studies
+    )
+    parts = "; ".join(f"{r} (n = {n})" for r, n in reasons.most_common())
+    return (f"Se excluyeron {len(studies)} estudios tras aplicar los criterios de elegibilidad. "
+            f"Motivos: {parts}. El detalle de cada estudio se presenta en la Tabla 2.")
 
 
 # ── Cover page ───────────────────────────────────────────────────────────────
@@ -418,7 +481,8 @@ def export_pdf(review_id: int, db: Session = Depends(get_db)):
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")
 
-    studies = db.query(Study).filter(Study.review_id == review_id, Study.included == True).all()
+    studies = eligible_studies(db, review_id)
+    excluded = excluded_studies(db, review_id)
     analysis = (
         db.query(Analysis)
         .filter(Analysis.review_id == review_id)
@@ -480,10 +544,10 @@ def export_pdf(review_id: int, db: Session = Depends(get_db)):
         _sub(story, "3.1.4", "Types of outcome measures", None, st, level=3)
 
         if review.primary_outcomes:
-            story.append(_para("<b>Primary outcomes</b>", st["label"]))
+            story.append(_para("Primary outcomes", st["label"]))
             story.append(_para(review.primary_outcomes, st["body"]))
         if review.secondary_outcomes:
-            story.append(_para("<b>Secondary outcomes</b>", st["label"]))
+            story.append(_para("Secondary outcomes", st["label"]))
             story.append(_para(review.secondary_outcomes, st["body"]))
 
         _sub(story, "3.2", "Search methods for identification of studies", None, st)
@@ -571,19 +635,15 @@ def export_pdf(review_id: int, db: Session = Depends(get_db)):
          (f"A total of {len(studies)} studies were included in this review." if studies else None),
          st, level=3)
 
-    # Study characteristics table
     if studies:
-        story.append(_para("Tabla 1. Características de los estudios incluidos", st["label"]))
-        story.append(Spacer(1, 0.15*cm))
-        for block in _study_table(studies, st):
-            story.append(block)
-        story.append(Spacer(1, 0.2*cm))
+        story += [NextPageTemplate("landscape"), PageBreak(),
+                  *_characteristics_table(studies, st),
+                  NextPageTemplate("portrait"), PageBreak()]
 
-    _sub(story, "4.1.3", "Excluded studies",
-         "Studies were excluded due to: wrong population, wrong intervention, "
-         "wrong outcome, wrong study design, or duplicate publication. "
-         "See Appendix for full list of excluded studies.",
-         st, level=3)
+    _sub(story, "4.1.3", "Excluded studies", _exclusion_summary(excluded), st, level=3)
+    if excluded:
+        story += _excluded_table(excluded, st)
+        story.append(Spacer(1, 0.3 * cm))
 
     _sub(story, "4.1.4", "Risk of bias in included studies",
          review.risk_of_bias_results, st, level=3)
@@ -806,15 +866,28 @@ def _docx_add_heading(doc_obj, text: str, level: int, color_hex: str = "005A9C")
 
 
 def _docx_add_body(doc_obj, text: str, italic: bool = False, size_pt: int = 10):
+    """Add text as Word paragraphs, rendering the AI's Markdown (headings, **bold**, bullets)."""
     from docx.shared import Pt
     from docx.enum.text import WD_ALIGN_PARAGRAPH
     if not text:
         return
-    p = doc_obj.add_paragraph(text)
-    p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
-    for run in p.runs:
-        run.italic = italic
-        run.font.size = Pt(size_pt)
+    for line in str(text).splitlines():
+        if not line.strip():
+            continue
+        h = _MD_HEADING.match(line)
+        if h:
+            line = f"**{h.group(1)}**"
+        line = _MD_BULLET.sub("• ", line)
+        p = doc_obj.add_paragraph()
+        p.alignment = WD_ALIGN_PARAGRAPH.JUSTIFY
+        for part in re.split(r"(\*\*.+?\*\*)", line):
+            if not part:
+                continue
+            bold = part.startswith("**") and part.endswith("**") and len(part) > 4
+            run = p.add_run(_MD_ITALIC.sub(r"\1", part[2:-2] if bold else part).replace("**", ""))
+            run.bold = bold
+            run.italic = italic
+            run.font.size = Pt(size_pt)
 
 
 def _docx_embed_b64_image(doc_obj, b64: str, width_cm: float, caption: str):
@@ -840,76 +913,59 @@ def _docx_embed_b64_image(doc_obj, b64: str, width_cm: float, caption: str):
         doc_obj.add_paragraph(f"[{caption} — no disponible]")
 
 
+def _docx_set_orientation(doc_obj, landscape_page: bool):
+    from docx.enum.section import WD_ORIENT, WD_SECTION
+    sec = doc_obj.add_section(WD_SECTION.NEW_PAGE)
+    w, h = sec.page_width, sec.page_height
+    if landscape_page != (w > h):
+        sec.page_width, sec.page_height = h, w
+    sec.orientation = WD_ORIENT.LANDSCAPE if landscape_page else WD_ORIENT.PORTRAIT
+
+
+def _docx_rule_table(doc_obj, rows: list, widths_cm: list, size_pt: float):
+    from docx.shared import Pt, Cm
+    tbl = doc_obj.add_table(rows=len(rows), cols=len(widths_cm))
+    tbl.style = "Table Grid"
+    for r, values in enumerate(rows):
+        for c, value in enumerate(values):
+            cell = tbl.rows[r].cells[c]
+            cell.width = Cm(widths_cm[c])
+            cell.text = ""
+            run = cell.paragraphs[0].add_run(str(value))
+            run.font.size = Pt(size_pt)
+            run.bold = r == 0 or c == 0
+    return tbl
+
+
 def _docx_study_table(doc_obj, studies: list):
-    """Add one 2-column card per study: field labels + values stacked vertically."""
-    from docx.shared import Pt, RGBColor, Cm
-    from docx.oxml.ns import qn
-    from docx.oxml import OxmlElement
+    """Compact 'Characteristics of included studies' table on its own landscape page."""
+    _docx_set_orientation(doc_obj, True)
+    _docx_add_body(doc_obj, "**Tabla 1. Características de los estudios incluidos**", size_pt=10)
+    rows = [["Estudio", "País / ámbito", "Diseño", "N", "Población",
+             "Intervención vs. comparador", "Resultados principales", "RoB"]]
+    for s in studies:
+        n = (s.total_intervention or 0) + (s.total_control or 0) or s.sample_size
+        rows.append([
+            _study_name(s),
+            _trunc(s.country or s.setting, 40),
+            _trunc(s.study_design, 60),
+            str(n) if n else "—",
+            _trunc(s.patient_population or s.inclusion_criteria, 150),
+            _trunc(s.group_comparison, 150),
+            _trunc(s.key_findings or s.survival_outcomes or s.study_results or s.findings, 260),
+            _ROB_LABEL_ES.get(s.rob_overall, "Sin evaluar"),
+        ])
+    _docx_rule_table(doc_obj, rows, [3.3, 2.0, 2.4, 1.1, 4.2, 4.2, 5.6, 2.5], 7)
+    _docx_add_body(doc_obj, "N: participantes analizados; RoB: riesgo de sesgo global; "
+                            "—: no reportado en la información disponible.", italic=True, size_pt=7)
+    _docx_set_orientation(doc_obj, False)
 
-    FIELD_LABELS = ["Autores", "Año", "Tipo de estudio", "Participantes (N)",
-                    "Intervención", "Resultados", "Riesgo de sesgo"]
-    ROB_ES = {"low": "Bajo", "some_concerns": "Algunas preocupaciones", "high": "Alto"}
 
-    for i, s in enumerate(studies, 1):
-        authors = getattr(s, "authors", None) or "—"
-        year    = str(getattr(s, "year", None) or "—")
-        label   = getattr(s, "study_label", None) or f"{authors} ({year})"
-        n_int   = getattr(s, "total_intervention", None) or 0
-        n_ctrl  = getattr(s, "total_control", None) or 0
-        n       = str((n_int + n_ctrl) or getattr(s, "sample_size", None) or "—")
-        design  = getattr(s, "study_design", None) or "—"
-        interv  = getattr(s, "group_comparison", None) or getattr(s, "patient_population", None) or "—"
-        outc    = (getattr(s, "survival_outcomes", None) or getattr(s, "key_findings", None)
-                   or getattr(s, "study_results", None) or getattr(s, "findings", None) or "—")
-        rob_raw = getattr(s, "rob_overall", None)
-        rob_txt = ROB_ES.get(rob_raw, "—" if not rob_raw else rob_raw)
-
-        values = [authors, year, design, n, interv, outc, rob_txt]
-
-        tbl = doc_obj.add_table(rows=1 + len(FIELD_LABELS), cols=2)
-        tbl.style = "Table Grid"
-
-        # Title row spanning 2 cols
-        title_row = tbl.rows[0]
-        title_row.cells[0].merge(title_row.cells[1])
-        cell = title_row.cells[0]
-        cell.text = f"{i}. {label[:120]}"
-        for run in cell.paragraphs[0].runs:
-            run.bold = True
-            run.font.size = Pt(10)
-            run.font.color.rgb = RGBColor(0xFF, 0xFF, 0xFF)
-        # Blue background for title cell
-        tc_pr = cell._tc.get_or_add_tcPr()
-        shd = OxmlElement("w:shd")
-        shd.set(qn("w:val"), "clear")
-        shd.set(qn("w:color"), "auto")
-        shd.set(qn("w:fill"), "005A9C")
-        tc_pr.append(shd)
-
-        # Field rows
-        for row_idx, (lbl, val) in enumerate(zip(FIELD_LABELS, values), 1):
-            row = tbl.rows[row_idx]
-            # Label cell (light blue shading)
-            lbl_cell = row.cells[0]
-            lbl_cell.text = lbl
-            lbl_cell.width = Cm(3.8)
-            for run in lbl_cell.paragraphs[0].runs:
-                run.bold = True
-                run.font.size = Pt(8.5)
-            tc_pr2 = lbl_cell._tc.get_or_add_tcPr()
-            shd2 = OxmlElement("w:shd")
-            shd2.set(qn("w:val"), "clear")
-            shd2.set(qn("w:color"), "auto")
-            shd2.set(qn("w:fill"), "E8F1F8")
-            tc_pr2.append(shd2)
-            # Value cell
-            val_cell = row.cells[1]
-            val_cell.text = val
-            val_cell.width = Cm(13.2)
-            for run in val_cell.paragraphs[0].runs:
-                run.font.size = Pt(8.5)
-
-        doc_obj.add_paragraph()
+def _docx_excluded_table(doc_obj, studies: list):
+    _docx_add_body(doc_obj, "**Tabla 2. Características de los estudios excluidos**", size_pt=10)
+    rows = [["Estudio", "Motivo de exclusión"]]
+    rows += [[_study_name(s), _trunc(s.exclusion_reason or "Motivo no registrado", 300)] for s in studies]
+    _docx_rule_table(doc_obj, rows, [4.6, 12.0], 8)
 
 
 @router.get("/docx")
@@ -929,8 +985,7 @@ def export_docx(review_id: int, db: Session = Depends(get_db)):
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")
 
-    studies = db.query(Study).filter(Study.review_id == review_id,
-                                     Study.included == True).all()  # noqa: E712
+    studies = eligible_studies(db, review_id)
     analysis = (
         db.query(Analysis)
         .filter(Analysis.review_id == review_id)
@@ -1034,11 +1089,16 @@ def export_docx(review_id: int, db: Session = Depends(get_db)):
 
     # Study characteristics table
     _docx_add_heading(d, "4.1.2  Estudios incluidos", 3)
-    _docx_add_body(d, "Tabla 1. Características de los estudios incluidos", italic=True, size_pt=9)
     if studies:
         _docx_study_table(d, studies)
     else:
         _docx_add_body(d, "[Sin estudios incluidos]")
+
+    excluded = excluded_studies(db, review_id)
+    _docx_add_heading(d, "Estudios excluidos", 3)
+    _docx_add_body(d, _exclusion_summary(excluded))
+    if excluded:
+        _docx_excluded_table(d, excluded)
 
     _docx_add_heading(d, "4.1.3  Riesgo de sesgo en los estudios incluidos", 3)
     _docx_add_body(d, review.risk_of_bias_results or "[Pendiente de generar]")
