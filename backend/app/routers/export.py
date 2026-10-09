@@ -24,6 +24,7 @@ from ..services.plots import (
     generate_funnel_plot, generate_rob_traffic_light, _short_label,
 )
 from ..services.eligibility import eligible_studies, excluded_studies
+from ..services.prospero import PROSPERO_FIELDS, load_answers
 from ..services.statistics import meta_result_from_dict
 from ..services.prisma import sync_prisma, prisma_plot_kwargs
 
@@ -450,6 +451,20 @@ def _cover(story, review: Review, st: dict, n_studies: int):
 
 # ── Structured abstract ──────────────────────────────────────────────────────
 
+def _prospero_section(story, review: Review, st: dict):
+    """PROSPERO registration answers (English), placed before the abstract."""
+    answers = load_answers(review)
+    if not answers:
+        return
+    _h1_block(story, "", "PROSPERO registration", st)
+    if review.prospero_id:
+        story.append(_para(f"**Registration number:** {review.prospero_id}", st["body_sm"]))
+    for key, label, _ in PROSPERO_FIELDS:
+        story.append(_para(label, st["h3"]))
+        story.append(_para(answers.get(key) or "[Not provided]", st["body_sm"]))
+    story.append(PageBreak())
+
+
 def _abstract_section(story, review: Review, st: dict):
     _h1_block(story, "", "Abstract", st)
 
@@ -499,6 +514,7 @@ def export_pdf(review_id: int, db: Session = Depends(get_db)):
 
     # ── Cover ────────────────────────────────────────────────────────────────
     _cover(story, review, st, len(studies))
+    _prospero_section(story, review, st)
 
     # ── Abstract ─────────────────────────────────────────────────────────────
     _abstract_section(story, review, st)
@@ -1014,6 +1030,16 @@ def export_docx(review_id: int, db: Session = Depends(get_db)):
                     f"Estudios incluidos: {len(studies)} · "
                     f"Fecha: {datetime.utcnow().strftime('%d/%m/%Y')}").alignment = WD_ALIGN_PARAGRAPH.CENTER
     d.add_page_break()
+
+    prospero_answers = load_answers(review)
+    if prospero_answers:
+        _docx_add_heading(d, "PROSPERO registration", 1)
+        if review.prospero_id:
+            _docx_add_body(d, f"**Registration number:** {review.prospero_id}")
+        for key, label, _ in PROSPERO_FIELDS:
+            _docx_add_heading(d, label, 3)
+            _docx_add_body(d, prospero_answers.get(key) or "[Not provided]")
+        d.add_page_break()
 
     # ── Abstract ────────────────────────────────────────────────────────────
     _docx_add_heading(d, "Resumen (Abstract)", 1)

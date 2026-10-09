@@ -6,7 +6,7 @@ from sqlalchemy import inspect as sa_inspect
 
 from .database import engine, Base
 from .config import settings
-from .routers import reviews, studies, analysis, generate, export, references
+from .routers import reviews, studies, analysis, generate, export, references, prospero
 
 Base.metadata.create_all(bind=engine)
 
@@ -70,6 +70,8 @@ def _migrate_db():
         ("prisma_included", "INTEGER"),
         ("prisma_reports_included", "INTEGER"),
         ("subgroup_study_types", "TEXT"),
+        ("prospero_json", "TEXT"),
+        ("prospero_question_hash", "VARCHAR(64)"),
     ]
 
     inspector = sa_inspect(engine)
@@ -131,6 +133,7 @@ app.include_router(analysis.router)
 app.include_router(generate.router)
 app.include_router(export.router)
 app.include_router(references.router)
+app.include_router(prospero.router)
 
 _static_dir = os.path.join(os.path.dirname(__file__), "static")
 if os.path.isdir(_static_dir):

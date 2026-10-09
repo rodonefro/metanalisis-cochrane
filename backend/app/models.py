@@ -84,6 +84,11 @@ class Review(Base):
     prisma_included = Column(Integer, nullable=True)
     prisma_reports_included = Column(Integer, nullable=True)
 
+    # PROSPERO registration answers (JSON {field_key: English text}) and the fingerprint
+    # of the research question they were generated from.
+    prospero_json = Column(Text, nullable=True)
+    prospero_question_hash = Column(String(64), nullable=True)
+
     studies = relationship("Study", back_populates="review", cascade="all, delete-orphan")
     analyses = relationship("Analysis", back_populates="review", cascade="all, delete-orphan")
 

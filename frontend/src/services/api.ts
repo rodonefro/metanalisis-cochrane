@@ -187,6 +187,20 @@ export interface Analysis {
 // Reviews
 export const listReviews = () => api.get<ReviewSummary[]>('/reviews/').then(r => r.data)
 export const getReview = (id: number) => api.get<Review>(`/reviews/${id}`).then(r => r.data)
+
+export interface ProsperoState {
+  fields: { key: string; label: string }[]
+  answers: Record<string, string>
+  generated: boolean
+  has_question: boolean
+  stale: boolean
+}
+export const getProspero = (reviewId: number) =>
+  api.get<ProsperoState>(`/reviews/${reviewId}/prospero`).then(r => r.data)
+export const generateProspero = (reviewId: number) =>
+  api.post<ProsperoState>(`/reviews/${reviewId}/prospero/generate`).then(r => r.data)
+export const saveProspero = (reviewId: number, answers: Record<string, string>) =>
+  api.put<ProsperoState>(`/reviews/${reviewId}/prospero`, { answers }).then(r => r.data)
 export const createReview = (data: Partial<Review>) => api.post<Review>('/reviews/', data).then(r => r.data)
 export const updateReview = (id: number, data: Partial<Review>) =>
   api.put<Review>(`/reviews/${id}`, data).then(r => r.data)

@@ -10,6 +10,7 @@ import AnalysisPanel from '../components/AnalysisPanel'
 import PrismaPanel from '../components/PrismaPanel'
 import ReferenceManager from '../components/ReferenceManager'
 import ReferencesSection from '../components/ReferencesSection'
+import ProsperoPanel from '../components/ProsperoPanel'
 
 const SECTIONS = [
   { key: 'abstract', title: 'Resumen (Abstract)' },
@@ -80,6 +81,7 @@ export default function ReviewEditor() {
     mutationFn: (data: Partial<Review>) => updateReview(reviewId, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['review', reviewId] })
+      qc.invalidateQueries({ queryKey: ['prospero', reviewId] })
       setSavedAt(new Date())
       setPicoDirty(false)
     },
@@ -217,6 +219,11 @@ export default function ReviewEditor() {
             <Download size={16} /> Exportar Word
           </button>
         </div>
+      </div>
+
+      {/* PROSPERO registration (English) */}
+      <div className="mb-4">
+        <ProsperoPanel reviewId={reviewId} />
       </div>
 
       {/* PICO quick edit */}

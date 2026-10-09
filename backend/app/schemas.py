@@ -157,6 +157,7 @@ class ReviewBase(BaseModel):
     prisma_exclusion_reasons: Optional[str] = None
     prisma_included: Optional[int] = None
     prisma_reports_included: Optional[int] = None
+    prospero_json: Optional[str] = None
 
 
 class ReviewCreate(ReviewBase):
