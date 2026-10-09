@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import {
   FileText, Trash2, Clock, Edit3, Plus, BarChart2,
-  BookOpen, CheckCircle2, AlertCircle, Circle,
+  BookOpen, CheckCircle2, AlertCircle, Circle, ClipboardList,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { listReviews, deleteReview, type ReviewSummary } from '../services/api'
@@ -139,6 +139,13 @@ export default function Dashboard() {
                   className="flex items-center gap-1 shrink-0"
                   onClick={(e) => e.stopPropagation()}
                 >
+                  <button
+                    onClick={() => navigate(`/reviews/${r.id}#prospero`)}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-cochrane-200 text-cochrane-700 bg-cochrane-50 hover:bg-cochrane-100 transition-colors"
+                    title="Abrir el registro PROSPERO de esta revisión (respuestas en inglés)"
+                  >
+                    <ClipboardList size={14} /> Registro PROSPERO
+                  </button>
                   <button
                     onClick={() => navigate(`/reviews/${r.id}`)}
                     className="p-2 text-gray-400 hover:text-cochrane-500 rounded-lg hover:bg-cochrane-50 transition-colors"

@@ -77,6 +77,12 @@ export default function ReviewEditor() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [review?.id])
 
+  useEffect(() => {
+    if (review && window.location.hash === '#prospero') {
+      document.getElementById('prospero')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    }
+  }, [review?.id])
+
   const updateMutation = useMutation({
     mutationFn: (data: Partial<Review>) => updateReview(reviewId, data),
     onSuccess: () => {
@@ -222,7 +228,7 @@ export default function ReviewEditor() {
       </div>
 
       {/* PROSPERO registration (English) */}
-      <div className="mb-4">
+      <div id="prospero" className="mb-4 scroll-mt-4">
         <ProsperoPanel reviewId={reviewId} />
       </div>
 
