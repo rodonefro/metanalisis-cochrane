@@ -1,9 +1,9 @@
 import { useState, useRef } from 'react'
-import { Upload, Plus, Trash2, ChevronDown, ChevronUp, Database, Download, Merge, Wand2, CheckCircle2, XCircle, Lock, RotateCcw } from 'lucide-react'
+import { Upload, Plus, Trash2, ChevronDown, ChevronUp, Database, Download, Merge, Wand2, CheckCircle2, XCircle, Lock, RotateCcw, ShieldCheck } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  deleteStudy, uploadStudies, createStudy, mergeStudyDatabases, aiScreenStudies, aiExtractData, updateStudy, resetScreening, API_BASE,
+  deleteStudy, uploadStudies, createStudy, mergeStudyDatabases, aiScreenStudies, aiExtractData, updateStudy, resetScreening, aiAssessRob, API_BASE,
   type Study, type ExtractionReportItem,
 } from '../services/api'
 import StudiesDatabaseModal from './StudiesDatabaseModal'
@@ -105,6 +105,15 @@ export default function StudiesTable({ reviewId, studies }: Props) {
       invalidate()
     },
     onError: (e: any) => toast.error(e.response?.data?.detail || 'Error en extracción de datos'),
+  })
+
+  const robMutation = useMutation({
+    mutationFn: () => aiAssessRob(reviewId),
+    onSuccess: (res) => {
+      toast.success(res.message, { duration: 8000 })
+      invalidate()
+    },
+    onError: (e: any) => toast.error(e.response?.data?.detail || 'Error en la evaluación de riesgo de sesgo'),
   })
 
   const setField = (field: keyof Study) => (
@@ -268,6 +277,19 @@ export default function StudiesTable({ reviewId, studies }: Props) {
               >
                 <Wand2 size={14} className={extractMutation.isPending ? 'animate-spin' : ''} />
                 {extractMutation.isPending ? 'Extrayendo datos...' : 'Extraer datos con IA'}
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (confirm('¿Evaluar el riesgo de sesgo (7 dominios Cochrane) de los estudios incluidos con IA? Solo se evalúan los estudios que aún no tienen calificación; las existentes no se modifican. Es una evaluación sugerida a partir de la información disponible y debe verificarse con el texto completo.'))
+                    robMutation.mutate()
+                }}
+                disabled={robMutation.isPending || screenMutation.isPending || extractMutation.isPending}
+                className="btn-secondary text-xs"
+                title="Califica cada dominio de riesgo de sesgo con su justificación (queda en las notas de RoB del estudio)"
+              >
+                <ShieldCheck size={14} className={robMutation.isPending ? 'animate-pulse' : ''} />
+                {robMutation.isPending ? 'Evaluando sesgo...' : 'Evaluar sesgo con IA'}
               </button>
             </div>
 

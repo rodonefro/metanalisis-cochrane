@@ -11,6 +11,7 @@ from ..services.plots import generate_forest_plot, generate_funnel_plot, generat
 from ..services.prisma import sync_prisma, prisma_plot_kwargs
 from ..services.ai_generator import (
     screen_studies_with_ai, extract_quantitative_data, eligibility_block,
+    assess_risk_of_bias, ROB_DOMAIN_KEYS,
     interpret_forest_plot, interpret_funnel_plot, interpret_grade_table, interpret_rob_plot,
 )
 
@@ -348,6 +349,52 @@ def ai_screen_studies(review_id: int, db: Session = Depends(get_db)):
         "excluded": excluded_count,
         "uncertain": uncertain_count,
         "skipped_already_reviewed": already_reviewed,
+    }
+
+
+@router.post("/ai-rob")
+def ai_assess_rob(review_id: int, db: Session = Depends(get_db)):
+    """AI risk-of-bias assessment for included studies that have no domain rated yet."""
+    review = db.query(Review).filter(Review.id == review_id).first()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+
+    included = db.query(Study).filter(Study.review_id == review_id, Study.included == True).all()  # noqa: E712
+    if not included:
+        raise HTTPException(status_code=422, detail="No hay estudios incluidos para evaluar el riesgo de sesgo.")
+
+    pending = [s for s in included if not any(getattr(s, k) for k in ROB_DOMAIN_KEYS)]
+    if not pending:
+        return {
+            "message": "Todos los estudios incluidos ya tienen evaluación de riesgo de sesgo; no se modificó ninguno.",
+            "assessed": 0,
+            "skipped_already_rated": len(included),
+        }
+
+    review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
+    studies_list = [{c.name: getattr(s, c.name) for c in s.__table__.columns} for s in pending]
+    try:
+        assessments = assess_risk_of_bias(review_dict, studies_list)
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error en la evaluación de riesgo de sesgo: {exc}")
+
+    for study in pending:
+        fields = assessments.get(study.id)
+        if fields:
+            for field, value in fields.items():
+                setattr(study, field, value)
+    db.commit()
+
+    assessed = sum(1 for s in pending if s.id in assessments)
+    return {
+        "message": (
+            f"Riesgo de sesgo evaluado en {assessed} estudios"
+            + (f" ({len(pending) - assessed} sin respuesta, quedan pendientes)" if assessed < len(pending) else "")
+            + f"; {len(included) - len(pending)} ya tenían evaluación y no se modificaron. "
+            "Es una evaluación sugerida por IA: verifícala con el texto completo."
+        ),
+        "assessed": assessed,
+        "skipped_already_rated": len(included) - len(pending),
     }
 
 

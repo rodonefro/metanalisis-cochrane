@@ -279,10 +279,23 @@ def generate_risk_of_bias_results(review: dict, studies: list[dict]) -> str:
     ctx = _base_context(review, studies)
     tally = _rob_domain_tally(studies)
     k = len(studies)
+    level_es = {"low": "bajo", "some_concerns": "algunas preocupaciones", "high": "alto"}
+    per_study = "\n".join(
+        f"- {s.get('study_label') or s.get('authors') or s.get('id')}: global "
+        f"{level_es.get(s.get('rob_overall'), 'sin evaluar')}"
+        for s in studies[:40]
+    )
+    ai_rated = sum(1 for s in studies if ROB_AI_TAG in (s.get("rob_notes") or ""))
+    provenance = (
+        f"\nNOTA: {ai_rated} de {k} evaluaciones fueron sugeridas por IA a partir de la información "
+        "disponible (título/resumen) y están pendientes de verificación con el texto completo; "
+        "menciónalo explícitamente como limitación.\n"
+        if ai_rated else ""
+    )
     user = (
         f"{ctx}\n\n"
-        f"EVALUACIÓN DEL RIESGO DE SESGO (Cochrane RoB 2), {k} estudios incluidos, "
-        f"por dominio:\n{tally}\n\n"
+        f"EVALUACIÓN DEL RIESGO DE SESGO (herramienta Cochrane), {k} estudios incluidos, "
+        f"por dominio:\n{tally}\n\nRIESGO GLOBAL POR ESTUDIO:\n{per_study}\n{provenance}\n"
         "Escribe la sección 'Riesgo de sesgo en los estudios incluidos' en ESPAÑOL para esta "
         "revisión sistemática Cochrane, usando ÚNICAMENTE los números reales proporcionados arriba "
         "(no inventes cifras). Estructura:\n"
@@ -698,6 +711,127 @@ def _check_consistency(fields: dict) -> list[str]:
     if None not in (es, lo, hi) and not (lo <= es <= hi):
         bad.update({"effect_size", "effect_size_lower", "effect_size_upper"})
     return sorted(bad)
+
+
+ROB_DOMAIN_KEYS = [
+    "rob_random_sequence", "rob_allocation_concealment", "rob_blinding_participants",
+    "rob_blinding_outcome", "rob_incomplete_data", "rob_selective_reporting", "rob_other",
+]
+ROB_AI_TAG = "[Evaluación sugerida por IA a partir de la información disponible — verificar con el texto completo]"
+
+_ROB_LEVEL = {"type": "string", "enum": ["low", "some_concerns", "high"]}
+_ROB_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "assessments": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer"},
+                    "design": {"type": "string"},
+                    **{k: _ROB_LEVEL for k in ROB_DOMAIN_KEYS},
+                    "justification": {"type": "string"},
+                },
+                "required": ["id", "design", *ROB_DOMAIN_KEYS, "justification"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["assessments"],
+    "additionalProperties": False,
+}
+
+
+def assess_risk_of_bias(review: dict, studies: list[dict]) -> dict:
+    """
+    Rate the 7 Cochrane risk-of-bias domains for each study from its stored information.
+    Returns {study_id: {rob_*: level, "rob_overall": level, "rob_notes": str}}.
+    """
+    import json
+
+    client = _get_client()
+    results: dict = {}
+    batch_size = 10
+    domain_guide = (
+        "- rob_random_sequence: generación de la secuencia aleatoria.\n"
+        "- rob_allocation_concealment: ocultamiento de la asignación.\n"
+        "- rob_blinding_participants: cegamiento de participantes y personal.\n"
+        "- rob_blinding_outcome: cegamiento de la evaluación de desenlaces.\n"
+        "- rob_incomplete_data: datos de desenlace incompletos (pérdidas, exclusiones).\n"
+        "- rob_selective_reporting: notificación selectiva de resultados.\n"
+        "- rob_other: otras fuentes de sesgo (p. ej., confusión en estudios observacionales, "
+        "diseño antes-después, finalización temprana, desequilibrios basales)."
+    )
+
+    for i in range(0, len(studies), batch_size):
+        batch = studies[i:i + batch_size]
+        payload = []
+        for s in batch:
+            entry = {"id": s["id"]}
+            for field in _SCREEN_STUDY_FIELDS:
+                value = s.get(field)
+                if value not in (None, ""):
+                    entry[field] = value
+            payload.append(entry)
+
+        user = (
+            f"REVISIÓN SISTEMÁTICA: {review.get('title') or ''}\n"
+            f"Desenlaces de interés: {review.get('outcomes') or ''}\n\n"
+            "Evalúa el riesgo de sesgo de cada estudio en los 7 dominios de la herramienta Cochrane:\n"
+            f"{domain_guide}\n\n"
+            f"ESTUDIOS (JSON):\n{json.dumps(payload, ensure_ascii=False, indent=1)}\n\n"
+            "Reglas:\n"
+            "1. Juzga ÚNICAMENTE con la información proporcionada de cada estudio; no uses "
+            "conocimiento externo sobre el artículo.\n"
+            "2. \"low\" solo si la información describe explícitamente un método adecuado para ese "
+            "dominio. \"high\" si describe un método inadecuado o el diseño lo implica. "
+            "\"some_concerns\" si el dominio no se describe o la información es insuficiente.\n"
+            "3. Estudios no aleatorizados (cohortes, casos y controles, antes-después, "
+            "transversales): secuencia aleatoria y ocultamiento de la asignación son \"high\" "
+            "porque no hubo asignación aleatoria; evalúa la confusión en \"rob_other\".\n"
+            "4. Ensayos abiertos (sin cegamiento declarado) son \"high\" en cegamiento de "
+            "participantes; para el cegamiento de la evaluación considera si el desenlace es "
+            "objetivo (p. ej., mortalidad).\n"
+            "5. En \"design\" indica el diseño identificado (p. ej., \"ECA\", \"cohorte "
+            "retrospectiva\", \"no identificable\").\n"
+            "6. En \"justification\" escribe en español una frase breve por dominio, con la "
+            "evidencia usada o indicando que no se reporta.\n"
+            "Devuelve exactamente una evaluación por cada id recibido."
+        )
+
+        with client.messages.stream(
+            model="claude-opus-5",
+            max_tokens=64000,
+            thinking={"type": "adaptive"},
+            output_config={
+                "effort": "high",
+                "format": {"type": "json_schema", "schema": _ROB_SCHEMA},
+            },
+            system=_SCREEN_SYSTEM,
+            messages=[{"role": "user", "content": user}],
+        ) as stream:
+            message = stream.get_final_message()
+
+        if message.stop_reason == "refusal":
+            raise RuntimeError("El modelo declinó evaluar este lote de estudios.")
+        if message.stop_reason == "max_tokens":
+            raise RuntimeError("La respuesta de la evaluación quedó truncada; reintenta.")
+
+        text = next(b.text for b in message.content if b.type == "text")
+        batch_ids = {s["id"] for s in batch}
+        for a in json.loads(text)["assessments"]:
+            if a["id"] not in batch_ids:
+                continue
+            levels = [a[k] for k in ROB_DOMAIN_KEYS]
+            overall = "high" if "high" in levels else "some_concerns" if "some_concerns" in levels else "low"
+            results[a["id"]] = {
+                **{k: a[k] for k in ROB_DOMAIN_KEYS},
+                "rob_overall": overall,
+                "rob_notes": f"{ROB_AI_TAG}\nDiseño: {a['design'].strip()}\n{a['justification'].strip()}",
+            }
+
+    return results
 
 
 def extract_quantitative_data(review: dict, studies: list[dict]) -> dict:

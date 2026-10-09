@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { BarChart2, ChevronDown, ChevronUp, Play, Wand2, Download, Filter, Table, Zap, CheckCircle2, Loader2, ShieldAlert } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { runAnalysis, getLatestAnalysis, generateSection, getForestPlot, getFunnelPlot, getGradeTable, getRobPlot, aiScreenStudies, aiExtractData, computePrisma } from '../services/api'
+import { runAnalysis, getLatestAnalysis, generateSection, getForestPlot, getFunnelPlot, getGradeTable, getRobPlot, aiScreenStudies, aiExtractData, aiAssessRob, computePrisma } from '../services/api'
 import type { Analysis } from '../services/api'
 
 interface Props {
@@ -206,6 +206,7 @@ export default function AnalysisPanel({ reviewId }: Props) {
     { id: 'screening',  label: 'Cribado IA' },
     { id: 'prisma',     label: 'PRISMA' },
     { id: 'extraction', label: 'Extracción' },
+    { id: 'rob',        label: 'Riesgo de sesgo' },
     { id: 'analysis',   label: 'Meta-análisis' },
     { id: 'plots',      label: 'Gráficas' },
   ]
@@ -214,30 +215,34 @@ export default function AnalysisPanel({ reviewId }: Props) {
     setPipelineRunning(true)
     try {
       setPipelineStep('screening')
-      toast.loading('Paso 1/5 — Cribado de estudios con IA...', { id: 'pipeline' })
+      toast.loading('Paso 1/6 — Cribado de estudios con IA...', { id: 'pipeline' })
       await aiScreenStudies(reviewId)
 
       // Keep the PRISMA flow diagram in sync with the studies the AI just
       // included/excluded — otherwise it freezes at whatever count it had
       // before this run and no longer matches the meta-analysis k.
       setPipelineStep('prisma')
-      toast.loading('Paso 2/5 — Sincronizando diagrama PRISMA...', { id: 'pipeline' })
+      toast.loading('Paso 2/6 — Sincronizando diagrama PRISMA...', { id: 'pipeline' })
       await computePrisma(reviewId)
       qc.invalidateQueries({ queryKey: ['review', reviewId] })
 
       setPipelineStep('extraction')
-      toast.loading('Paso 3/5 — Extracción de datos cuantitativos...', { id: 'pipeline' })
+      toast.loading('Paso 3/6 — Extracción de datos cuantitativos...', { id: 'pipeline' })
       await aiExtractData(reviewId)
 
+      setPipelineStep('rob')
+      toast.loading('Paso 4/6 — Evaluación del riesgo de sesgo con IA...', { id: 'pipeline' })
+      await aiAssessRob(reviewId)
+
       setPipelineStep('analysis')
-      toast.loading('Paso 4/5 — Ejecutando meta-análisis estadístico...', { id: 'pipeline' })
+      toast.loading('Paso 5/6 — Ejecutando meta-análisis estadístico...', { id: 'pipeline' })
       await runAnalysis(reviewId)
       qc.invalidateQueries({ queryKey: ['analysis', reviewId] })
       // run_analysis also syncs prisma_reports_included to the real k it computed
       qc.invalidateQueries({ queryKey: ['review', reviewId] })
 
       setPipelineStep('plots')
-      toast.loading('Paso 5/5 — Generando gráficas con interpretación IA...', { id: 'pipeline' })
+      toast.loading('Paso 6/6 — Generando gráficas con interpretación IA...', { id: 'pipeline' })
       setLoadingForest(true); setLoadingFunnel(true); setLoadingGrade(true); setLoadingRob(true)
       const [forestRes, funnelRes, gradeRes, robRes] = await Promise.all([
         getForestPlot(reviewId),

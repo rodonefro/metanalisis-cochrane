@@ -297,6 +297,9 @@ export const resetScreening = (reviewId: number) =>
 export const aiExtractData = (reviewId: number) =>
   api.post<{ message: string; updated: number; total_included: number; report: ExtractionReportItem[] }>(`/reviews/${reviewId}/analysis/ai-extract`).then(r => r.data)
 
+export const aiAssessRob = (reviewId: number) =>
+  api.post<{ message: string; assessed: number; skipped_already_rated: number }>(`/reviews/${reviewId}/analysis/ai-rob`).then(r => r.data)
+
 // Export
 export const exportPdf = (reviewId: number) =>
   api.get(`/reviews/${reviewId}/export/pdf`, { responseType: 'blob' }).then(r => r.data)
