@@ -7,19 +7,23 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from reportlab.lib.pagesizes import A4
+from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import cm
 from reportlab.lib import colors
 from reportlab.platypus import (
-    SimpleDocTemplate, Paragraph, Spacer, Image, HRFlowable,
-    PageBreak, Table, TableStyle, KeepTogether,
+    BaseDocTemplate, PageTemplate, Frame, NextPageTemplate, Paragraph, Spacer, Image,
+    HRFlowable, PageBreak, Table, TableStyle, KeepTogether,
 )
 from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_JUSTIFY
 
 from ..database import get_db
 from ..models import Review, Study, Analysis
-from ..services.plots import generate_prisma_2020, generate_grade_table
+from ..services.plots import (
+    generate_prisma_2020, generate_grade_table, generate_forest_plot,
+    generate_funnel_plot, generate_rob_traffic_light,
+)
+from ..services.statistics import meta_result_from_dict
 from ..services.prisma import sync_prisma, prisma_plot_kwargs
 
 router = APIRouter(prefix="/reviews/{review_id}/export", tags=["export"])
@@ -75,6 +79,81 @@ def _b64_to_image(b64: str, width_cm: float = 14) -> Image | None:
         return img
     except Exception:
         return None
+
+
+PDF_MARGIN = 2.2 * cm
+_CAPTION_RESERVE = 1.6 * cm
+
+
+def _figure_page(story, b64: str | None, caption: str, st: dict) -> bool:
+    """Put a figure on its own page, landscape or portrait — whichever prints it larger."""
+    if not b64:
+        return False
+    img = _b64_to_image(b64)
+    if img is None:
+        return False
+    iw, ih = img.imageWidth, img.imageHeight
+
+    def fit(page):
+        w, h = page[0] - 2 * PDF_MARGIN, page[1] - 2 * PDF_MARGIN - _CAPTION_RESERVE
+        return min(w / iw, h / ih)
+
+    orient = "landscape" if fit(landscape(A4)) > fit(A4) else "portrait"
+    scale = fit(landscape(A4) if orient == "landscape" else A4)
+    img.drawWidth, img.drawHeight = iw * scale, ih * scale
+    img.hAlign = "CENTER"
+    story += [
+        NextPageTemplate(orient), PageBreak(),
+        img, Spacer(1, 0.25 * cm), _para(caption, st["caption"]),
+        NextPageTemplate("portrait"), PageBreak(),
+    ]
+    return True
+
+
+def _pdf_doc(buf, title: str) -> BaseDocTemplate:
+    doc = BaseDocTemplate(
+        buf, pagesize=A4,
+        leftMargin=PDF_MARGIN, rightMargin=PDF_MARGIN,
+        topMargin=PDF_MARGIN, bottomMargin=PDF_MARGIN,
+        title=title, author="MetaAnalysis Cochrane Platform",
+    )
+    templates = []
+    for name, size in (("portrait", A4), ("landscape", landscape(A4))):
+        frame = Frame(PDF_MARGIN, PDF_MARGIN, size[0] - 2 * PDF_MARGIN, size[1] - 2 * PDF_MARGIN,
+                      leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0, id=name)
+        templates.append(PageTemplate(id=name, frames=[frame], pagesize=size))
+    doc.addPageTemplates(templates)
+    return doc
+
+
+def _fresh_plots(review: Review, analysis: Analysis | None, studies: list) -> dict:
+    """Re-render plots with the current layout code; fall back to the stored PNGs."""
+    plots = {
+        "forest": analysis.forest_plot_b64 if analysis else None,
+        "funnel": analysis.funnel_plot_b64 if analysis else None,
+        "rob": analysis.rob_plot_b64 if analysis else None,
+    }
+    if not analysis or not analysis.results_json:
+        return plots
+    study_dicts = [{c.name: getattr(s, c.name) for c in s.__table__.columns} for s in studies]
+    try:
+        result = meta_result_from_dict(json.loads(analysis.results_json))
+        plots["forest"] = generate_forest_plot(result, title=review.title or "") or plots["forest"]
+        plots["funnel"] = generate_funnel_plot(result, title="Funnel Plot") or plots["funnel"]
+    except Exception:
+        pass
+    if plots["rob"] and study_dicts:
+        try:
+            plots["rob"] = generate_rob_traffic_light(study_dicts) or plots["rob"]
+        except Exception:
+            pass
+    return plots
+
+
+def _ascii_filename(title: str) -> str:
+    import unicodedata
+    plain = unicodedata.normalize("NFKD", title).encode("ascii", "ignore").decode()
+    return re.sub(r"[^A-Za-z0-9]+", "_", plain).strip("_")[:60] or "review"
 
 
 def _styles():
@@ -348,14 +427,8 @@ def export_pdf(review_id: int, db: Session = Depends(get_db)):
     )
 
     buf = io.BytesIO()
-    PAGE_W, PAGE_H = A4
-    doc = SimpleDocTemplate(
-        buf, pagesize=A4,
-        leftMargin=2.2*cm, rightMargin=2.2*cm,
-        topMargin=2.2*cm, bottomMargin=2.2*cm,
-        title=review.title or "Systematic Review",
-        author="MetaAnalysis Cochrane Platform",
-    )
+    doc = _pdf_doc(buf, review.title or "Systematic Review")
+    plots = _fresh_plots(review, analysis, studies)
 
     st = _styles()
     story = []
@@ -515,37 +588,21 @@ def export_pdf(review_id: int, db: Session = Depends(get_db)):
     _sub(story, "4.1.4", "Risk of bias in included studies",
          review.risk_of_bias_results, st, level=3)
 
-    if analysis and analysis.rob_plot_b64:
-        # Embedded near the page's full text width, matching the forest plot —
-        # this chart's fonts are designed for that ~0.55x print shrink.
-        img = _b64_to_image(analysis.rob_plot_b64, 16.5)
-        if img:
-            story.append(img)
-            story.append(_para("Figure 2. Risk of bias summary (Cochrane RoB 2).", st["caption"]))
+    _figure_page(story, plots["rob"], "Figure 2. Risk of bias summary (Cochrane RoB 2).", st)
 
     _sub(story, "4.2", "Effects of interventions", None, st)
     _sub(story, "4.2.1", "Primary outcomes",
          review.intervention_effects or review.results_text, st, level=3)
 
-    # Forest plot — embedded near the page's full text width (A4 minus 2.2cm
-    # margins each side = 16.6cm) so the large fonts rendered in plots.py
-    # reach paper at a legible size instead of being shrunk down ~40%.
-    if analysis and analysis.forest_plot_b64:
-        img = _b64_to_image(analysis.forest_plot_b64, 16.5)
-        if img:
-            story.append(KeepTogether([
-                img,
-                _para("Figure 3. Forest plot — pooled effect estimate.", st["caption"]),
-            ]))
-            story.append(Spacer(1, 0.3*cm))
+    _figure_page(story, plots["forest"], "Figure 3. Forest plot — pooled effect estimate.", st)
 
     _sub(story, "4.2.2", "Secondary outcomes",
          review.secondary_outcomes, st, level=3)
 
-    # Funnel plot
-    if analysis and analysis.funnel_plot_b64:
-        img = _b64_to_image(analysis.funnel_plot_b64, 10)
+    if plots["funnel"]:
+        img = _b64_to_image(plots["funnel"], 14)
         if img:
+            img.hAlign = "CENTER"
             story.append(KeepTogether([
                 img,
                 _para("Figure 4. Funnel plot — assessment of publication bias.", st["caption"]),
@@ -699,14 +756,8 @@ def export_pdf(review_id: int, db: Session = Depends(get_db)):
                 for s in studies
             ]
             grade_b64 = generate_grade_table(result_dict, study_dicts, outcome=review.title or "")
-            # Embedded near the page's full text width, matching the forest
-            # plot — the chart's fonts are designed for this ~0.55x shrink.
-            img = _b64_to_image(grade_b64, 16.5)
-            if img:
-                story.append(img)
-                story.append(_para(
-                    "Table A1. GRADE evidence profile — certainty of evidence summary.",
-                    st["caption"]))
+            _figure_page(story, grade_b64,
+                         "Table A1. GRADE evidence profile — certainty of evidence summary.", st)
         except Exception:
             story.append(_para("[GRADE table could not be generated — run meta-analysis first]", st["note"]))
     else:
@@ -728,7 +779,7 @@ def export_pdf(review_id: int, db: Session = Depends(get_db)):
         )
     buf.seek(0)
 
-    safe_title = (review.title or "review").replace(" ", "_")[:60]
+    safe_title = _ascii_filename(review.title or "review")
     filename = f"Cochrane_Review_{safe_title}_{datetime.utcnow().strftime('%Y%m%d')}.pdf"
     return StreamingResponse(
         buf,
@@ -1099,7 +1150,7 @@ def export_docx(review_id: int, db: Session = Depends(get_db)):
     d.save(buf)
     buf.seek(0)
 
-    safe_title = (review.title or "revision").replace(" ", "_")[:60]
+    safe_title = _ascii_filename(review.title or "revision")
     filename = f"Cochrane_Review_{safe_title}_{datetime.utcnow().strftime('%Y%m%d')}.docx"
     return StreamingResponse(
         buf,

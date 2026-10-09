@@ -21,6 +21,22 @@ from typing import Optional as _Opt
 from .statistics import MetaResult, back_transform
 
 
+def _short_label(text, max_chars: int = 38) -> str:
+    """Cochrane-style 'Surname Year' label.
+
+    Imported labels are often the full author list plus year; an overlong label widens
+    the tight-cropped PNG and shrinks the whole figure when it is fitted to the PDF page.
+    """
+    import re as _re
+    s = " ".join(str(text or "").split())
+    if "," in s:
+        year = _re.search(r"((?:19|20)\d{2})\s*$", s)
+        first_author = s.split(",")[0].strip()
+        surname = first_author.split()[-1] if first_author.split() else first_author
+        s = f"{surname} et al." + (f" {year.group(1)}" if year else "")
+    return s if len(s) <= max_chars else s[: max_chars - 1].rstrip() + "…"
+
+
 def _b64(fig, dpi: int = 80) -> str:
     buf = io.BytesIO()
     fig.savefig(buf, format="png", dpi=dpi, bbox_inches="tight",
@@ -126,21 +142,15 @@ def _forest_plot_inner(result: MetaResult, title: str,
         lo = bt(s.ci_lower)
         hi = bt(s.ci_upper)
         weight = s.weight_re if result.model == "random" else s.weight_fe
-        box_size = max(0.06, weight / 100 * 0.7)
-
         # CI line
         ax.plot([lo, hi], [y, y], color="#2c3e50", linewidth=1.8, zorder=2)
-        # Square
-        rect = mpatches.FancyBboxPatch(
-            (effect - box_size / 2, y - box_size / 4),
-            box_size, box_size / 2,
-            boxstyle="square,pad=0",
-            facecolor="#2980b9", edgecolor="#1a252f", linewidth=0.7, zorder=3,
-        )
-        ax.add_patch(rect)
+        # Square area proportional to study weight, sized in points so it stays
+        # visible on both linear and log axes.
+        ax.scatter([effect], [y], marker="s", s=40 + weight * 14,
+                   facecolor="#2980b9", edgecolor="#1a252f", linewidth=0.7, zorder=3)
 
         # Labels
-        ax.text(LABEL_X, y, s.study_label, fontsize=F_LABEL, ha="right", va="center",
+        ax.text(LABEL_X, y, _short_label(s.study_label), fontsize=F_LABEL, ha="right", va="center",
                 transform=figx)
         ci_text = f"{effect:.2f} [{lo:.2f}, {hi:.2f}]"
         ax.text(CI_X, y, ci_text, fontsize=F_DATA, ha="left", va="center",
@@ -190,7 +200,9 @@ def _forest_plot_inner(result: MetaResult, title: str,
                   fontsize=F_AXIS)
     ax.tick_params(axis="x", labelsize=F_AXIS)
     if title:
-        ax.set_title(title, fontsize=F_TITLE, fontweight="bold", pad=16)
+        import textwrap as _textwrap
+        wrapped = _textwrap.wrap(title, width=int(fig_width * 72 / (F_TITLE * 0.55)))
+        ax.set_title("\n".join(wrapped[:3]), fontsize=F_TITLE, fontweight="bold", pad=16)
     ax.spines["left"].set_visible(False)
     ax.spines["right"].set_visible(False)
     ax.spines["top"].set_visible(False)
@@ -235,14 +247,15 @@ def generate_funnel_plot(result: MetaResult, title: str = "") -> str:
     ax.axvline(x=pooled_log, color="#c0392b", linewidth=1.2, linestyle="--",
                label=f"Pooled {result.effect_measure}")
 
-    ax.scatter(effects, se_values, color="#2980b9", s=40, alpha=0.8, zorder=3)
+    ax.scatter(effects, se_values, color="#2980b9", s=70, alpha=0.8, zorder=3)
 
     ax.invert_yaxis()
-    ax.set_ylabel("Standard Error", fontsize=9)
+    ax.set_ylabel("Error estándar", fontsize=14)
     label = f"log({result.effect_measure})" if is_log else result.effect_measure
-    ax.set_xlabel(label, fontsize=9)
-    ax.set_title(title or "Funnel Plot", fontsize=11, fontweight="bold")
-    ax.legend(fontsize=8)
+    ax.set_xlabel(label, fontsize=14)
+    ax.tick_params(labelsize=12.5)
+    ax.set_title(title or "Funnel Plot", fontsize=17, fontweight="bold")
+    ax.legend(fontsize=12.5)
 
     # Add Egger's test note
     if len(effects) >= 3:
@@ -251,7 +264,7 @@ def generate_funnel_plot(result: MetaResult, title: str = "") -> str:
             slopes = linregress(np.array(effects) / np.array(se_values), np.array(se_values))
             ax.text(0.05, 0.95,
                     f"Egger: intercept={slopes.intercept:.2f}, p={slopes.pvalue:.3f}",
-                    transform=ax.transAxes, fontsize=7.5, va="top",
+                    transform=ax.transAxes, fontsize=12, va="top",
                     bbox=dict(facecolor="white", edgecolor="gray", alpha=0.8))
         except Exception:
             pass
@@ -259,7 +272,7 @@ def generate_funnel_plot(result: MetaResult, title: str = "") -> str:
     ax.spines["right"].set_visible(False)
     ax.spines["top"].set_visible(False)
     plt.tight_layout()
-    return _b64(fig)
+    return _b64(fig, dpi=130)
 
 
 def generate_prisma_2020(
@@ -568,7 +581,7 @@ def generate_rob_traffic_light(studies_rob: list) -> str:
     F_LABEL, F_DOMAIN, F_SYMBOL, F_LEGEND, F_TITLE = 15, 13.5, 15, 13.5, 19
 
     def _label(study: dict) -> str:
-        return study.get("study_label") or f"{study.get('authors', '?')} {study.get('year', '')}"
+        return _short_label(study.get("study_label") or f"{study.get('authors', '?')} {study.get('year', '')}")
 
     # ── Measure first: a fixed inches-per-data-unit scale (COL_W_IN) keeps
     # the circles a consistent physical size regardless of label length —
