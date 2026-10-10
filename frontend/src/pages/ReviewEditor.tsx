@@ -10,6 +10,7 @@ import AnalysisPanel from '../components/AnalysisPanel'
 import PrismaPanel from '../components/PrismaPanel'
 import ReferencesSection from '../components/ReferencesSection'
 import ProsperoPanel from '../components/ProsperoPanel'
+import ReferenceManager from '../components/ReferenceManager'
 
 const SECTIONS = [
   { key: 'abstract', title: 'Resumen (Abstract)' },
@@ -360,6 +361,11 @@ export default function ReviewEditor() {
         </div>
       </div>
 
+
+      {/* Reference manager (Rayyan / Zotero) */}
+      <div className="mb-4">
+        <ReferenceManager reviewId={reviewId} studies={review.studies || []} />
+      </div>
 
       {/* Studies */}
       <div id="estudios" className="mb-4 scroll-mt-4">
