@@ -81,14 +81,34 @@ export default function StudiesTable({ reviewId, studies }: Props) {
     onError: (e: any) => toast.error(e.response?.data?.detail || 'Error en cribado IA'),
   })
 
-  const resetMutation = useMutation({
-    mutationFn: () => resetScreening(reviewId),
+  const repeatMutation = useMutation({
+    mutationFn: async () => {
+      await resetScreening(reviewId)
+      return aiScreenStudies(reviewId)
+    },
     onSuccess: (res) => {
-      toast.success(res.message)
+      toast.success(`Cribado repetido. ${res.message}`, { duration: 10000 })
       invalidate()
     },
-    onError: (e: any) => toast.error(e.response?.data?.detail || 'Error al reiniciar el cribado'),
+    onError: (e: any) => {
+      invalidate()
+      toast.error(
+        (e.response?.data?.detail || 'Error al repetir el cribado') +
+        ' — los estudios quedaron pendientes; pulsa «Cribar con IA» para reintentar.',
+      )
+    },
   })
+
+  const screening = screenMutation.isPending || repeatMutation.isPending
+
+  const confirmRepeat = () => {
+    if (confirm(
+      '¿Repetir el cribado con IA? Se borrarán TODAS las decisiones actuales de inclusión/exclusión ' +
+      '(las de la IA y las que marcaste manualmente) y la IA volverá a cribar todos los estudios con ' +
+      'los criterios actuales. Puede tardar varios minutos.'
+    ))
+      repeatMutation.mutate()
+  }
 
   const toggleMutation = useMutation({
     mutationFn: ({ id, included }: { id: number; included: boolean }) =>
@@ -188,6 +208,18 @@ export default function StudiesTable({ reviewId, studies }: Props) {
             <Upload size={14} />
             {uploadMutation.isPending ? 'Importando...' : 'Cargar Excel/CSV'}
           </button>
+          {studies.length > 0 && (
+            <button
+              type="button"
+              onClick={confirmRepeat}
+              disabled={screening}
+              className="btn-secondary text-xs"
+              title="Borra las decisiones actuales y la IA vuelve a cribar todos los estudios con los criterios actuales"
+            >
+              <RotateCcw size={14} className={repeatMutation.isPending ? 'animate-spin' : ''} />
+              {repeatMutation.isPending ? 'Repitiendo cribado...' : 'Repetir cribado'}
+            </button>
+          )}
           <button type="button" onClick={() => setOpen((o) => !o)} aria-label={open ? 'Contraer' : 'Expandir'}>
             {open ? <ChevronUp size={18} className="text-gray-400" /> : <ChevronDown size={18} className="text-gray-400" />}
           </button>
@@ -254,14 +286,14 @@ export default function StudiesTable({ reviewId, studies }: Props) {
                 type="button"
                 onClick={() => {
                   const pending = studies.filter(s => !s.screening_reviewed).length
-                  if (confirm(
-                    pending > 0
-                      ? `¿Cribar ${pending} estudio(s) pendiente(s) con IA según los criterios PICO? Los estudios que ya tienen una decisión (marcados manualmente o cribados antes) no se tocarán. Esto puede tardar 1-2 minutos.`
-                      : `Todos los estudios ya tienen una decisión de inclusión/exclusión. ¿Continuar de todas formas?`
+                  if (pending === 0) {
+                    confirmRepeat()
+                  } else if (confirm(
+                    `¿Cribar ${pending} estudio(s) pendiente(s) con IA según los criterios? Los estudios que ya tienen una decisión no se tocarán (usa «Repetir cribado» para volver a cribarlos todos). Esto puede tardar 1-2 minutos.`
                   ))
                     screenMutation.mutate()
                 }}
-                disabled={screenMutation.isPending || extractMutation.isPending}
+                disabled={screening || extractMutation.isPending}
                 className="btn-primary text-xs"
                 title="La IA analiza título, resumen y diseño de cada estudio pendiente y decide inclusión/exclusión según el PICO. No modifica estudios que ya tienen una decisión."
               >
@@ -270,20 +302,13 @@ export default function StudiesTable({ reviewId, studies }: Props) {
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  if (confirm(
-                    '¿Reiniciar el cribado? Se borrarán TODAS las decisiones de inclusión/exclusión ' +
-                    '(las de la IA y las que marcaste manualmente) y todos los estudios quedarán ' +
-                    'pendientes para volver a cribarlos. Esta acción no se puede deshacer.'
-                  ))
-                    resetMutation.mutate()
-                }}
-                disabled={resetMutation.isPending || screenMutation.isPending || studies.length === 0}
+                onClick={confirmRepeat}
+                disabled={screening || studies.length === 0}
                 className="btn-secondary text-xs"
-                title="Borra todas las decisiones de inclusión/exclusión para volver a cribar todos los estudios con los criterios actuales"
+                title="Borra las decisiones actuales y la IA vuelve a cribar todos los estudios con los criterios actuales"
               >
-                <RotateCcw size={14} className={resetMutation.isPending ? 'animate-spin' : ''} />
-                {resetMutation.isPending ? 'Reiniciando...' : 'Reiniciar cribado'}
+                <RotateCcw size={14} className={repeatMutation.isPending ? 'animate-spin' : ''} />
+                {repeatMutation.isPending ? 'Repitiendo cribado...' : 'Repetir cribado con IA'}
               </button>
               <button
                 type="button"
