@@ -78,8 +78,9 @@ export default function ReviewEditor() {
   }, [review?.id])
 
   useEffect(() => {
-    if (review && window.location.hash === '#prospero') {
-      document.getElementById('prospero')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    const target = window.location.hash.slice(1)
+    if (review && (target === 'prospero' || target === 'estudios')) {
+      document.getElementById(target)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
     }
   }, [review?.id])
 
@@ -366,7 +367,7 @@ export default function ReviewEditor() {
       </div>
 
       {/* Studies */}
-      <div className="mb-4">
+      <div id="estudios" className="mb-4 scroll-mt-4">
         <StudiesTable reviewId={reviewId} studies={review.studies || []} />
       </div>
 

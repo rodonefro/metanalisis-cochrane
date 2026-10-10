@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { useNavigate } from 'react-router-dom'
 import {
   FileText, Trash2, Clock, Edit3, Plus, BarChart2,
-  BookOpen, CheckCircle2, AlertCircle, Circle, ClipboardList,
+  BookOpen, CheckCircle2, AlertCircle, Circle, ClipboardList, Upload,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { listReviews, deleteReview, type ReviewSummary } from '../services/api'
@@ -145,6 +145,13 @@ export default function Dashboard() {
                     title="Abrir el registro PROSPERO de esta revisión (respuestas en inglés)"
                   >
                     <ClipboardList size={14} /> Registro PROSPERO
+                  </button>
+                  <button
+                    onClick={() => navigate(`/reviews/${r.id}#estudios`)}
+                    className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-green-200 text-green-700 bg-green-50 hover:bg-green-100 transition-colors"
+                    title="Abrir la sección de estudios para cargar la base de datos en Excel o CSV"
+                  >
+                    <Upload size={14} /> Cargar Excel/CSV
                   </button>
                   <button
                     onClick={() => navigate(`/reviews/${r.id}`)}

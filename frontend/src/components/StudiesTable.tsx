@@ -23,7 +23,7 @@ export default function StudiesTable({ reviewId, studies }: Props) {
   const qc = useQueryClient()
   const fileRef = useRef<HTMLInputElement>(null)
   const mergeRef = useRef<HTMLInputElement>(null)
-  const [open, setOpen] = useState(false)
+  const [open, setOpen] = useState(studies.length === 0 || window.location.hash === '#estudios')
   const [addingNew, setAddingNew] = useState(false)
   const [showDb, setShowDb] = useState(false)
   const [newStudy, setNewStudy] = useState<Partial<Study>>({ included: true })
@@ -131,12 +131,35 @@ export default function StudiesTable({ reviewId, studies }: Props) {
       )}
 
       <div className="card overflow-hidden">
-        <button
-          type="button"
-          onClick={() => setOpen((o) => !o)}
-          className="w-full flex items-center justify-between px-5 py-4 hover:bg-gray-50"
-        >
-          <div className="flex items-center gap-2">
+        <input
+          type="file"
+          ref={fileRef}
+          className="hidden"
+          accept=".csv,.xlsx,.xls"
+          onChange={(e) => {
+            const file = e.target.files?.[0]
+            if (file) uploadMutation.mutate(file)
+            e.target.value = ''
+          }}
+        />
+        <input
+          type="file"
+          ref={mergeRef}
+          className="hidden"
+          accept=".csv,.xlsx,.xls"
+          multiple
+          onChange={(e) => {
+            const files = Array.from(e.target.files || [])
+            if (files.length) mergeMutation.mutate(files)
+            e.target.value = ''
+          }}
+        />
+        <div className="flex items-center gap-3 px-5 py-4 hover:bg-gray-50">
+          <button
+            type="button"
+            onClick={() => setOpen((o) => !o)}
+            className="flex-1 flex items-center gap-2 text-left"
+          >
             <span className="font-semibold text-gray-800">Estudios (Studies)</span>
             <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
               {studies.filter(s => s.included !== false).length} incluidos
@@ -146,37 +169,26 @@ export default function StudiesTable({ reviewId, studies }: Props) {
                 {studies.filter(s => s.included === false).length} excluidos
               </span>
             )}
-          </div>
-          {open ? <ChevronUp size={18} className="text-gray-400" /> : <ChevronDown size={18} className="text-gray-400" />}
-        </button>
+          </button>
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            disabled={uploadMutation.isPending}
+            className="btn-primary text-xs"
+            title="Cargar la base de datos de estudios desde Excel (.xlsx/.xls) o CSV — plantilla propia, Elicit IA o SciSpace IA"
+          >
+            <Upload size={14} />
+            {uploadMutation.isPending ? 'Importando...' : 'Cargar Excel/CSV'}
+          </button>
+          <button type="button" onClick={() => setOpen((o) => !o)} aria-label={open ? 'Contraer' : 'Expandir'}>
+            {open ? <ChevronUp size={18} className="text-gray-400" /> : <ChevronDown size={18} className="text-gray-400" />}
+          </button>
+        </div>
 
         {open && (
           <div className="border-t border-gray-100">
             {/* Actions bar */}
             <div className="flex items-center gap-2 px-5 py-3 bg-gray-50 border-b border-gray-100 flex-wrap">
-              <input
-                type="file"
-                ref={fileRef}
-                className="hidden"
-                accept=".csv,.xlsx,.xls"
-                onChange={(e) => {
-                  const file = e.target.files?.[0]
-                  if (file) uploadMutation.mutate(file)
-                  e.target.value = ''
-                }}
-              />
-              <input
-                type="file"
-                ref={mergeRef}
-                className="hidden"
-                accept=".csv,.xlsx,.xls"
-                multiple
-                onChange={(e) => {
-                  const files = Array.from(e.target.files || [])
-                  if (files.length) mergeMutation.mutate(files)
-                  e.target.value = ''
-                }}
-              />
               <select
                 className="input text-xs py-1.5 w-auto"
                 value={importSource}
