@@ -12,6 +12,8 @@ export default function App() {
         <Route path="/dashboard" element={<Dashboard />} />
         <Route path="/reviews/new" element={<NewReview />} />
         <Route path="/reviews/:id" element={<ReviewEditor />} />
+        <Route path="/new" element={<Navigate to="/reviews/new" replace />} />
+        <Route path="*" element={<Navigate to="/dashboard" replace />} />
       </Route>
     </Routes>
   )

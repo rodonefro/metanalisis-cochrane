@@ -62,7 +62,7 @@ export default function Dashboard() {
           </p>
         </div>
         <button
-          onClick={() => navigate('/new')}
+          onClick={() => navigate('/reviews/new')}
           className="btn-primary"
         >
           <Plus size={16} /> Nuevo Meta-análisis
@@ -91,7 +91,7 @@ export default function Dashboard() {
           <BookOpen className="mx-auto text-gray-200 mb-4" size={56} strokeWidth={1.5} />
           <p className="text-gray-500 font-semibold text-lg">No hay meta-análisis guardados</p>
           <p className="text-gray-400 text-sm mt-1 mb-6">Comienza creando tu primera revisión sistemática</p>
-          <button onClick={() => navigate('/new')} className="btn-primary mx-auto">
+          <button onClick={() => navigate('/reviews/new')} className="btn-primary mx-auto">
             <Plus size={15} /> Crear primer meta-análisis
           </button>
         </div>
