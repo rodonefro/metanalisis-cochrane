@@ -142,6 +142,8 @@ export interface Study {
   pmid: string | null
   keywords: string | null
   extraction_evidence: string | null
+  analysis_suitability: 'quantitative' | 'narrative' | null
+  suitability_note: string | null
 }
 
 export interface SearchSource {

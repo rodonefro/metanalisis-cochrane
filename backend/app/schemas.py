@@ -80,6 +80,8 @@ class StudyBase(BaseModel):
     pmid: Optional[str] = None
     keywords: Optional[str] = None
     extraction_evidence: Optional[str] = None
+    analysis_suitability: Optional[str] = None
+    suitability_note: Optional[str] = None
 
 
 class StudyCreate(StudyBase):

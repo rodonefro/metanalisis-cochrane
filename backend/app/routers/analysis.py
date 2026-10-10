@@ -332,6 +332,7 @@ def ai_screen_studies(review_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=500, detail=f"Error en cribado IA: {exc}")
 
     included_count = 0
+    quantitative_count = 0
     excluded_count = 0
     uncertain_count = 0
     for study in pending_studies:
@@ -344,7 +345,11 @@ def ai_screen_studies(review_id: int, db: Session = Depends(get_db)):
         if kind == "include":
             study.included = True
             study.exclusion_reason = None
+            study.analysis_suitability = None if decision["suitability"] == "not_applicable" else decision["suitability"]
+            study.suitability_note = decision["suitability_note"] or None
             included_count += 1
+            if study.analysis_suitability == "quantitative":
+                quantitative_count += 1
         elif kind == "exclude":
             study.included = False
             study.exclusion_reason = f"{decision['criterion']}: {decision['reason']}"
@@ -363,7 +368,9 @@ def ai_screen_studies(review_id: int, db: Session = Depends(get_db)):
     no_decision = len(pending_studies) - included_count - excluded_count - uncertain_count
     return {
         "message": (
-            f"Cribado completado: {included_count} incluidos, {excluded_count} excluidos, "
+            f"Cribado completado: {included_count} incluidos ({quantitative_count} con datos "
+            f"cuantitativos para el metaanálisis, {included_count - quantitative_count} solo narrativos), "
+            f"{excluded_count} excluidos, "
             + (f"{len(duplicates)} duplicados, " if duplicates else "")
             + f"{uncertain_count} requieren revisión a texto completo"
             + (f", {no_decision} sin decisión (quedan pendientes)" if no_decision else "")
@@ -372,6 +379,7 @@ def ai_screen_studies(review_id: int, db: Session = Depends(get_db)):
         "included": included_count,
         "excluded": excluded_count,
         "uncertain": uncertain_count,
+        "quantitative": quantitative_count,
         "skipped_already_reviewed": already_reviewed,
     }
 
@@ -434,7 +442,8 @@ def reset_screening(review_id: int, db: Session = Depends(get_db)):
         .filter(Study.review_id == review_id)
         .update(
             {Study.included: True, Study.exclusion_reason: None, Study.screening_reviewed: False,
-             Study.screening_decision: None, Study.screening_stage: None},
+             Study.screening_decision: None, Study.screening_stage: None,
+             Study.analysis_suitability: None, Study.suitability_note: None},
             synchronize_session=False,
         )
     )

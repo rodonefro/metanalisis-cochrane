@@ -503,8 +503,10 @@ _SCREEN_SCHEMA = {
                     "decision": {"type": "string", "enum": ["include", "exclude", "uncertain"]},
                     "criterion": {"type": "string"},
                     "reason": {"type": "string"},
+                    "suitability": {"type": "string", "enum": ["quantitative", "narrative", "not_applicable"]},
+                    "suitability_note": {"type": "string"},
                 },
-                "required": ["id", "decision", "criterion", "reason"],
+                "required": ["id", "decision", "criterion", "reason", "suitability", "suitability_note"],
                 "additionalProperties": False,
             },
         },
@@ -572,7 +574,15 @@ def screen_studies_with_ai(review: dict, studies: list[dict]) -> dict:
             "3. Revisiones sistemáticas, metaanálisis, editoriales, cartas, protocolos sin resultados "
             "y estudios en animales o in vitro se excluyen, salvo que el autor los admita "
             "explícitamente.\n"
-            "4. No agregues criterios que el autor no haya definido.\n\n"
+            "4. No agregues criterios que el autor no haya definido.\n"
+            "5. Analizabilidad (solo para \"include\"): en \"suitability\" indica \"quantitative\" si "
+            "la información muestra datos numéricos comparables entre los grupos de intervención y "
+            "comparación para al menos un desenlace de la revisión (eventos y total por grupo, media y "
+            "DE por grupo, o un efecto con su IC 95 %), o \"narrative\" si solo aporta resultados "
+            "descriptivos, sin grupo comparador cuantificado o sin datos extraíbles. Para \"exclude\" "
+            "e \"uncertain\" usa \"not_applicable\". En \"suitability_note\" indica en español qué "
+            "datos cuantitativos aporta y para qué desenlace, o qué falta. La analizabilidad NUNCA "
+            "cambia la decisión: un estudio elegible sin datos numéricos se incluye igualmente.\n\n"
             "En \"criterion\" escribe el criterio concreto que determinó la decisión (para "
             "\"include\", escribe \"Cumple todos los criterios\"). En \"reason\" explica en español, "
             "en una o dos frases, la evidencia del estudio que sustenta la decisión. "
@@ -605,6 +615,8 @@ def screen_studies_with_ai(review: dict, studies: list[dict]) -> dict:
                     "decision": d["decision"],
                     "criterion": d["criterion"].strip(),
                     "reason": d["reason"].strip(),
+                    "suitability": d["suitability"],
+                    "suitability_note": d["suitability_note"].strip(),
                 }
 
     return results

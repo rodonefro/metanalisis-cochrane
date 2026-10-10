@@ -169,6 +169,14 @@ export default function StudiesTable({ reviewId, studies }: Props) {
                 {studies.filter(s => s.included === false).length} excluidos
               </span>
             )}
+            {studies.some(s => s.included !== false && s.analysis_suitability) && (
+              <span
+                className="text-xs bg-cochrane-50 text-cochrane-700 px-2 py-0.5 rounded-full"
+                title="Incluidos con datos cuantitativos comparables para el metaanálisis (según el cribado IA)"
+              >
+                {studies.filter(s => s.included !== false && s.analysis_suitability === 'quantitative').length} analizables
+              </span>
+            )}
           </button>
           <button
             type="button"
@@ -372,6 +380,18 @@ export default function StudiesTable({ reviewId, studies }: Props) {
                         <p className="font-medium truncate">{s.study_label || s.authors || '—'}</p>
                         {s.exclusion_reason && !isIncluded && (
                           <p className="text-red-400 truncate text-[10px]">{s.exclusion_reason}</p>
+                        )}
+                        {isIncluded && s.analysis_suitability && (
+                          <span
+                            title={s.suitability_note || ''}
+                            className={`inline-block mt-0.5 text-[10px] px-1.5 py-0.5 rounded-full ${
+                              s.analysis_suitability === 'quantitative'
+                                ? 'bg-green-100 text-green-700'
+                                : 'bg-amber-100 text-amber-700'
+                            }`}
+                          >
+                            {s.analysis_suitability === 'quantitative' ? 'Cuantitativo' : 'Solo narrativo'}
+                          </span>
                         )}
                         {s.journal && isIncluded && <p className="text-gray-400 truncate">{s.journal}</p>}
                       </td>

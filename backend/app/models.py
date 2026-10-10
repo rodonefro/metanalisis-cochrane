@@ -207,6 +207,10 @@ class Study(Base):
     keywords = Column(Text, nullable=True)
     # JSON: {field: {"value": x, "quote": "verbatim source text", "source": "abstract_text"}}
     extraction_evidence = Column(Text, nullable=True)
+    # Set by AI screening for included studies: "quantitative" (comparable numeric data for a
+    # review outcome, can enter the meta-analysis) or "narrative" (narrative synthesis only).
+    analysis_suitability = Column(String(20), nullable=True)
+    suitability_note = Column(Text, nullable=True)
 
     review = relationship("Review", back_populates="studies")
 

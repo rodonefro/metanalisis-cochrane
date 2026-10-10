@@ -48,6 +48,8 @@ def _migrate_db():
         ("pmid", "VARCHAR(50)"),
         ("keywords", "TEXT"),
         ("extraction_evidence", "TEXT"),
+        ("analysis_suitability", "VARCHAR(20)"),
+        ("suitability_note", "TEXT"),
     ]
     new_search_cols = [
         ("source_type", "VARCHAR(20) DEFAULT 'database'"),
