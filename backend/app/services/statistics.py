@@ -134,11 +134,13 @@ def _tau2_dl(Q: float, k: int, weights: List[float]) -> float:
 
 
 def run_meta_analysis(study_data: list, effect_measure: str,
-                      model: str = "random") -> MetaResult:
+                      model: str = "random", precalc_as: str | None = None) -> MetaResult:
     """
     study_data: list of dicts with keys matching Study model fields.
-    effect_measure: "OR" | "RR" | "RD" | "MD" | "SMD"
+    effect_measure: "OR" | "RR" | "RD" | "MD" | "SMD" | "PRECALCULATED"
     model: "fixed" | "random"
+    precalc_as: measure the precalculated effects are expressed in; OR/RR are pooled on the
+        log scale and the result is reported as that measure.
     """
     study_effects: List[StudyEffect] = []
     excluded_studies: List[tuple] = []
@@ -181,11 +183,23 @@ def run_meta_analysis(study_data: list, effect_measure: str,
                                                     float(m2), float(sd2), n2)
 
             elif effect_measure == "PRECALCULATED":
-                eff = float(s.get("effect_size") or 0)
-                lo = float(s.get("effect_size_lower") or (eff - 1))
-                hi = float(s.get("effect_size_upper") or (eff + 1))
+                raw = (s.get("effect_size"), s.get("effect_size_lower"), s.get("effect_size_upper"))
+                if any(v is None for v in raw):
+                    excluded_studies.append((label, "Falta el tamaño de efecto precalculado con su IC 95 %"))
+                    continue
+                eff, lo, hi = (float(v) for v in raw)
+                if not lo < hi or not lo <= eff <= hi:
+                    excluded_studies.append((label, "IC 95 % del efecto precalculado inválido"))
+                    continue
+                if precalc_as in ("OR", "RR"):
+                    if lo <= 0:
+                        excluded_studies.append((label, "Razón precalculada con IC no positivo"))
+                        continue
+                    eff, lo, hi = math.log(eff), math.log(lo), math.log(hi)
                 se = (hi - lo) / (2 * 1.96)
                 var = se ** 2
+                total_n += (int(s.get("total_intervention") or 0) + int(s.get("total_control") or 0)
+                            or int(s.get("sample_size") or 0))
             else:
                 continue
 
@@ -207,6 +221,8 @@ def run_meta_analysis(study_data: list, effect_measure: str,
     k = len(study_effects)
     if k == 0:
         raise ValueError("No hay estudios con datos suficientes para el análisis.")
+    if effect_measure == "PRECALCULATED" and precalc_as:
+        effect_measure = precalc_as
 
     effects = [s.effect for s in study_effects]
     variances = [s.variance for s in study_effects]

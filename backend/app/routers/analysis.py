@@ -52,12 +52,31 @@ def run_analysis(review_id: int, db: Session = Depends(get_db)):
     try:
         result = run_meta_analysis(study_data, effect_measure, model_type)
     except ValueError:
-        # Fallback: try pre-calculated effect sizes
+        # Fallback: studies that report an effect estimate with its 95% CI (in the review's measure)
         try:
-            result = run_meta_analysis(study_data, "PRECALCULATED", model_type)
-            effect_measure = "PRECALCULATED"
-        except ValueError as exc2:
-            raise HTTPException(status_code=422, detail=str(exc2))
+            result = run_meta_analysis(study_data, "PRECALCULATED", model_type, precalc_as=effect_measure)
+            effect_measure = result.effect_measure
+        except ValueError:
+            needed = {
+                "OR": "eventos y total por grupo", "RR": "eventos y total por grupo",
+                "RD": "eventos y total por grupo", "MD": "media, DE y n por grupo",
+                "SMD": "media, DE y n por grupo",
+            }.get(effect_measure, "datos por grupo")
+            # Earlier results no longer describe the current set of included studies.
+            stale = db.query(Analysis).filter(Analysis.review_id == review_id).delete()
+            review.prisma_reports_included = 0
+            db.commit()
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    f"Ninguno de los {len(study_data)} estudios incluidos tiene datos para calcular "
+                    f"{effect_measure}: faltan {needed} (o un efecto {effect_measure} con su IC 95 %). "
+                    "Ejecuta «Extraer datos con IA» o captura los datos en la base de estudios; "
+                    "no se generó ningún resultado."
+                    + (f" Se eliminaron {stale} análisis anteriores que ya no corresponden a los "
+                       "estudios incluidos." if stale else "")
+                ),
+            )
 
     result_dict = result_to_dict(result)
 
