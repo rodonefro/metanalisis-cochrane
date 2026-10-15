@@ -872,7 +872,7 @@ def extract_quantitative_data(review: dict, studies: list[dict]) -> dict:
         s for s in studies
         if s.get("included") is not False
         and any(s.get(f) for f, _ in _EXTRACT_SOURCE_FIELDS)
-        and not any(s.get(f) is not None for f in fields)
+        and (s.get("sample_size") is None or not any(s.get(f) is not None for f in fields))
     ]
 
     client = _get_client()
@@ -897,7 +897,10 @@ def extract_quantitative_data(review: dict, studies: list[dict]) -> dict:
             f"MEDIDA DE EFECTO: {effect_measure}\n"
             f"DESENLACE A EXTRAER (definido por el autor): {outcome or 'desenlace principal de la revisión'}\n"
             f"Intervención: {review.get('intervention', '')} | Comparador: {review.get('comparison', '')}\n\n"
-            f"CAMPOS: {', '.join(fields)} (y sample_size si se reporta el N total del estudio).\n"
+            f"CAMPOS: {', '.join(fields)} y sample_size.\n"
+            "- sample_size = número total de participantes/pacientes incluidos en el estudio. "
+            "Extráelo SIEMPRE que esté escrito (p. ej. \"25 neonates\", \"n = 130\"), aunque el estudio "
+            "sea de un solo brazo, no tenga grupo control o no reporte el desenlace por grupo.\n"
             "- *_intervention = grupo de la intervención de la revisión; *_control = grupo comparador.\n"
             "- events_* = número de participantes con el evento; total_* = participantes analizados en ese grupo.\n"
             "- effect_size/effect_size_lower/effect_size_upper = medida e IC95% tal como se reporta.\n\n"
@@ -908,7 +911,8 @@ def extract_quantitative_data(review: dict, studies: list[dict]) -> dict:
             "2. No calcules nada: si solo hay un porcentaje, no derives el número de eventos; si hay "
             "error estándar o rango, no lo conviertas en DE; si hay mediana, no la uses como media.\n"
             "3. Extrae solo el desenlace indicado. Si el estudio no lo reporta para ambos grupos, "
-            "devuelve values vacío. Si hay varios momentos de seguimiento, usa el principal declarado "
+            "no devuelvas campos de grupo (pero sí sample_size si está escrito). Si hay varios "
+            "momentos de seguimiento, usa el principal declarado "
             "y escribe cuál en \"outcome_reported\".\n"
             "4. No asignes un grupo a intervención o control si el texto no permite saberlo.\n\n"
             f"ESTUDIOS (JSON):\n{json.dumps(payload, ensure_ascii=False, indent=1)}\n\n"

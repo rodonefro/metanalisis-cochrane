@@ -197,6 +197,22 @@ export default function StudiesTable({ reviewId, studies }: Props) {
                 {studies.filter(s => s.included !== false && s.analysis_suitability === 'quantitative').length} analizables
               </span>
             )}
+            {(() => {
+              const inc = studies.filter(s => s.included !== false)
+              const nOf = (s: Study) => ((s.total_intervention ?? 0) + (s.total_control ?? 0)) || s.sample_size || 0
+              const withN = inc.filter(s => nOf(s) > 0)
+              const total = withN.reduce((a, s) => a + nOf(s), 0)
+              return inc.length > 0 && (
+                <span
+                  className={`text-xs px-2 py-0.5 rounded-full ${withN.length ? 'bg-blue-50 text-blue-700' : 'bg-amber-50 text-amber-700'}`}
+                  title={withN.length < inc.length ? `${inc.length - withN.length} estudios incluidos sin N extraído: usa "Extraer datos con IA" o captúralo` : undefined}
+                >
+                  {withN.length
+                    ? `${total.toLocaleString('es-MX')} pacientes (${withN.length}/${inc.length} estudios con N)`
+                    : 'N de pacientes sin extraer'}
+                </span>
+              )
+            })()}
           </button>
           <button
             type="button"
