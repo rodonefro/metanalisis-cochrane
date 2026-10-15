@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { ArrowLeft, Download, Save, CheckCircle2, Loader2 } from 'lucide-react'
-import { getReview, updateReview, generateSection, exportPdf, exportDocx, type Review } from '../services/api'
+import { getReview, updateReview, generateSection, exportPdf, exportDocx, exportIncludedStudies, exportSearchStrategies, exportExcludedStudies, type Review } from '../services/api'
 import SectionEditor from '../components/SectionEditor'
 import StudiesTable from '../components/StudiesTable'
 import AnalysisPanel from '../components/AnalysisPanel'
@@ -169,6 +169,51 @@ export default function ReviewEditor() {
     }
   }
 
+  const handleExportIncludedStudies = async () => {
+    try {
+      const blob = await exportIncludedStudies(reviewId)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `Estudios_Incluidos_${review?.title?.replace(/\s+/g, '_') || 'review'}.xlsx`
+      a.click()
+      URL.revokeObjectURL(url)
+      toast.success('Estudios incluidos descargados')
+    } catch {
+      toast.error('Error al exportar estudios incluidos')
+    }
+  }
+
+  const handleExportSearchStrategies = async () => {
+    try {
+      const blob = await exportSearchStrategies(reviewId)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `Estrategias_Búsqueda_${review?.title?.replace(/\s+/g, '_') || 'review'}.xlsx`
+      a.click()
+      URL.revokeObjectURL(url)
+      toast.success('Estrategias de búsqueda descargadas')
+    } catch {
+      toast.error('Error al exportar estrategias de búsqueda')
+    }
+  }
+
+  const handleExportExcludedStudies = async () => {
+    try {
+      const blob = await exportExcludedStudies(reviewId)
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `Excluidos_TextoCompleto_${review?.title?.replace(/\s+/g, '_') || 'review'}.xlsx`
+      a.click()
+      URL.revokeObjectURL(url)
+      toast.success('Estudios excluidos descargados')
+    } catch {
+      toast.error('Error al exportar estudios excluidos')
+    }
+  }
+
   if (isLoading) return (
     <div className="flex items-center justify-center min-h-screen">
       <p className="text-gray-400">Cargando revisión...</p>
@@ -224,6 +269,22 @@ export default function ReviewEditor() {
           </button>
           <button onClick={handleExportDocx} className="btn-secondary">
             <Download size={16} /> Exportar Word
+          </button>
+        </div>
+      </div>
+
+      {/* Data export section */}
+      <div className="card p-4 mb-4 bg-blue-50 border-blue-200">
+        <h3 className="text-sm font-semibold text-blue-900 mb-3">Exportar Datos</h3>
+        <div className="flex flex-wrap gap-2">
+          <button onClick={handleExportIncludedStudies} className="btn-secondary text-xs">
+            <Download size={14} /> Estudios Incluidos (Excel)
+          </button>
+          <button onClick={handleExportSearchStrategies} className="btn-secondary text-xs">
+            <Download size={14} /> Estrategias de Búsqueda (Excel)
+          </button>
+          <button onClick={handleExportExcludedStudies} className="btn-secondary text-xs">
+            <Download size={14} /> Excluidos a Texto Completo (Excel)
           </button>
         </div>
       </div>

@@ -323,4 +323,13 @@ export const exportPdf = (reviewId: number) =>
 export const exportDocx = (reviewId: number) =>
   api.get(`/reviews/${reviewId}/export/docx`, { responseType: 'blob' }).then(r => r.data)
 
+export const exportIncludedStudies = (reviewId: number) =>
+  api.get(`/reviews/${reviewId}/export/included-studies`, { responseType: 'blob' }).then(r => r.data)
+
+export const exportSearchStrategies = (reviewId: number) =>
+  api.get(`/reviews/${reviewId}/export/search-strategies`, { responseType: 'blob' }).then(r => r.data)
+
+export const exportExcludedStudies = (reviewId: number) =>
+  api.get(`/reviews/${reviewId}/export/excluded-studies`, { responseType: 'blob' }).then(r => r.data)
+
 export default api

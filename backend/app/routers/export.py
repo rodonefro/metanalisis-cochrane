@@ -1243,3 +1243,263 @@ def export_docx(review_id: int, db: Session = Depends(get_db)):
         media_type="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+# ── Data exports: Excel files ───────────────────────────────────────────────
+
+@router.get("/included-studies")
+def export_included_studies(review_id: int, db: Session = Depends(get_db)):
+    """Export included studies to Excel with key fields."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+    review = db.query(Review).filter(Review.id == review_id).first()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+
+    studies = eligible_studies(db, review_id)
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Estudios Incluidos"
+
+    # Header
+    headers = ["ID", "Etiqueta", "Autores", "Año", "Título", "Revista", "DOI",
+               "Diseño", "N", "Intervención/Comparación", "RoB"]
+    header_fill = PatternFill(start_color="005A9C", end_color="005A9C", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=1, column=col)
+        cell.value = header
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.border = thin_border
+        cell.alignment = Alignment(wrap_text=True, vertical="center")
+
+    # Data rows
+    for row_idx, s in enumerate(studies, 2):
+        row_data = [
+            s.id,
+            s.study_label or "",
+            s.authors or "",
+            s.year or "",
+            s.title or "",
+            s.journal or "",
+            s.doi or "",
+            s.study_design or "",
+            s.sample_size or "",
+            f"{s.group_comparison or ''} | {s.intervention or ''}" if s.intervention else s.group_comparison or "",
+            s.rob_overall or ""
+        ]
+        for col_idx, value in enumerate(row_data, 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            cell.value = value
+            cell.border = thin_border
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+
+    # Adjust column widths
+    ws.column_dimensions['A'].width = 6
+    ws.column_dimensions['B'].width = 16
+    ws.column_dimensions['C'].width = 18
+    ws.column_dimensions['D'].width = 8
+    ws.column_dimensions['E'].width = 28
+    ws.column_dimensions['F'].width = 16
+    ws.column_dimensions['G'].width = 14
+    ws.column_dimensions['H'].width = 14
+    ws.column_dimensions['I'].width = 8
+    ws.column_dimensions['J'].width = 20
+    ws.column_dimensions['K'].width = 10
+
+    # Freeze header row
+    ws.freeze_panes = "A2"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    safe_title = _ascii_filename(review.title or "revision")
+    filename = f"Estudios_Incluidos_{safe_title}_{datetime.utcnow().strftime('%Y%m%d')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/search-strategies")
+def export_search_strategies(review_id: int, db: Session = Depends(get_db)):
+    """Export search strategies and results from all databases."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from ..services.prisma import search_summary
+    from ..models import SearchDatabase
+
+    review = db.query(Review).filter(Review.id == review_id).first()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+
+    searches = db.query(SearchDatabase).filter(SearchDatabase.review_id == review_id).order_by(SearchDatabase.id).all()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Estrategias de Búsqueda"
+
+    # Title and review info
+    ws['A1'].value = f"Estrategias de búsqueda — {review.title}"
+    ws['A1'].font = Font(bold=True, size=12)
+    ws.merge_cells('A1:G1')
+
+    ws['A3'].value = "Base de datos / Fuente"
+    ws['B3'].value = "Tipo"
+    ws['C3'].value = "Fecha de búsqueda"
+    ws['D3'].value = "Registros reportados"
+    ws['E3'].value = "Registros importados"
+    ws['F3'].value = "Duplicados encontrados"
+    ws['G3'].value = "Estrategia / Cadena de búsqueda"
+
+    header_fill = PatternFill(start_color="005A9C", end_color="005A9C", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+
+    for col in range(1, 8):
+        cell = ws.cell(row=3, column=col)
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.border = thin_border
+        cell.alignment = Alignment(wrap_text=True, vertical="center")
+
+    # Data rows
+    type_label = {"database": "Base de datos", "register": "Registro", "other": "Otros métodos"}
+    for row_idx, s in enumerate(searches, 4):
+        row_data = [
+            s.database_name,
+            type_label.get(s.source_type, s.source_type),
+            s.search_date or "",
+            s.results_count or "",
+            s.records_imported or 0,
+            s.duplicates_found or 0,
+            s.search_string or ""
+        ]
+        for col_idx, value in enumerate(row_data, 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            cell.value = value
+            cell.border = thin_border
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+
+    # Column widths
+    ws.column_dimensions['A'].width = 20
+    ws.column_dimensions['B'].width = 14
+    ws.column_dimensions['C'].width = 16
+    ws.column_dimensions['D'].width = 14
+    ws.column_dimensions['E'].width = 14
+    ws.column_dimensions['F'].width = 14
+    ws.column_dimensions['G'].width = 40
+
+    ws.freeze_panes = "A4"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    safe_title = _ascii_filename(review.title or "revision")
+    filename = f"Estrategias_Búsqueda_{safe_title}_{datetime.utcnow().strftime('%Y%m%d')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/excluded-studies")
+def export_excluded_studies(review_id: int, db: Session = Depends(get_db)):
+    """Export excluded studies at full-text stage with exclusion reasons."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+    review = db.query(Review).filter(Review.id == review_id).first()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+
+    # Get studies excluded at full-text (screening_stage == 'full_text')
+    excluded = db.query(Study).filter(
+        Study.review_id == review_id,
+        Study.included == False,
+        Study.screening_stage == 'full_text'
+    ).order_by(Study.id).all()
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Excluidos a Texto Completo"
+
+    # Title
+    ws['A1'].value = f"Estudios excluidos a texto completo — {review.title}"
+    ws['A1'].font = Font(bold=True, size=12)
+    ws.merge_cells('A1:F1')
+
+    # Headers
+    headers = ["ID", "Etiqueta", "Autores", "Año", "Título", "Motivo de exclusión"]
+    header_fill = PatternFill(start_color="C0392B", end_color="C0392B", fill_type="solid")
+    header_font = Font(bold=True, color="FFFFFF")
+    thin_border = Border(
+        left=Side(style='thin'),
+        right=Side(style='thin'),
+        top=Side(style='thin'),
+        bottom=Side(style='thin')
+    )
+
+    for col, header in enumerate(headers, 1):
+        cell = ws.cell(row=3, column=col)
+        cell.value = header
+        cell.fill = header_fill
+        cell.font = header_font
+        cell.border = thin_border
+        cell.alignment = Alignment(wrap_text=True, vertical="center")
+
+    # Data rows
+    for row_idx, s in enumerate(excluded, 4):
+        row_data = [
+            s.id,
+            s.study_label or "",
+            s.authors or "",
+            s.year or "",
+            s.title or "",
+            s.exclusion_reason or ""
+        ]
+        for col_idx, value in enumerate(row_data, 1):
+            cell = ws.cell(row=row_idx, column=col_idx)
+            cell.value = value
+            cell.border = thin_border
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+
+    # Column widths
+    ws.column_dimensions['A'].width = 6
+    ws.column_dimensions['B'].width = 16
+    ws.column_dimensions['C'].width = 18
+    ws.column_dimensions['D'].width = 8
+    ws.column_dimensions['E'].width = 28
+    ws.column_dimensions['F'].width = 32
+
+    ws.freeze_panes = "A4"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+
+    safe_title = _ascii_filename(review.title or "revision")
+    filename = f"Excluidos_TextoCompleto_{safe_title}_{datetime.utcnow().strftime('%Y%m%d')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
