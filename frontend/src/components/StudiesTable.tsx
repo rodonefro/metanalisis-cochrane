@@ -3,7 +3,7 @@ import { Upload, Plus, Trash2, ChevronDown, ChevronUp, Database, Download, Merge
 import toast from 'react-hot-toast'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
-  deleteStudy, uploadStudies, createStudy, mergeStudyDatabases, aiScreenStudies, aiExtractData, updateStudy, resetScreening, aiAssessRob, API_BASE,
+  deleteStudy, uploadStudies, createStudy, mergeStudyDatabases, downloadStudies, aiScreenStudies, aiExtractData, updateStudy, resetScreening, aiAssessRob, API_BASE,
   type Study, type ExtractionReportItem,
 } from '../services/api'
 import StudiesDatabaseModal from './StudiesDatabaseModal'
@@ -29,6 +29,23 @@ export default function StudiesTable({ reviewId, studies }: Props) {
   const [newStudy, setNewStudy] = useState<Partial<Study>>({ included: true })
   const [importSource, setImportSource] = useState('')
   const [extractReport, setExtractReport] = useState<ExtractionReportItem[] | null>(null)
+  const [downloading, setDownloading] = useState<'xlsx' | 'csv' | null>(null)
+
+  const handleDownload = async (fmt: 'xlsx' | 'csv') => {
+    setDownloading(fmt)
+    try {
+      const url = URL.createObjectURL(await downloadStudies(reviewId, fmt))
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `Base_estudios_${reviewId}.${fmt}`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      toast.error('No se pudo descargar la base de datos')
+    } finally {
+      setDownloading(null)
+    }
+  }
 
   const invalidate = () => {
     qc.invalidateQueries({ queryKey: ['review', reviewId] })
@@ -291,6 +308,19 @@ export default function StudiesTable({ reviewId, studies }: Props) {
               >
                 <Database size={14} /> Ver base de datos
               </button>
+              {(['xlsx', 'csv'] as const).map(fmt => (
+                <button
+                  key={fmt}
+                  type="button"
+                  onClick={() => handleDownload(fmt)}
+                  disabled={studies.length === 0 || downloading !== null}
+                  className="btn-secondary text-xs"
+                  title={`Descargar todos los estudios cargados con todos sus campos (${fmt === 'xlsx' ? 'Excel' : 'CSV'})`}
+                >
+                  <Download size={14} />
+                  {downloading === fmt ? 'Descargando...' : `Descargar ${fmt === 'xlsx' ? 'Excel' : 'CSV'}`}
+                </button>
+              ))}
               <button
                 type="button"
                 onClick={() => setAddingNew(true)}

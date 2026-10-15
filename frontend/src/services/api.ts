@@ -224,7 +224,10 @@ export const uploadStudies = (reviewId: number, file: File, sourceDatabase?: str
   return api.post(`/reviews/${reviewId}/studies/upload`, form).then(r => r.data)
 }
 
-export const mergeStudyDatabases = (reviewId: number, files: File[]) => {
+export const downloadStudies = (reviewId: number, fmt: 'xlsx' | 'csv') =>
+  api.get(`/reviews/${reviewId}/studies/download`, { params: { fmt }, responseType: 'blob' }).then(r => r.data as Blob)
+
+export const mergeStudyDatabases =(reviewId: number, files: File[]) => {
   const form = new FormData()
   files.forEach(f => form.append('files', f))
   return api.post<{

@@ -1,6 +1,9 @@
+import io
 import re
 from typing import List
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, status
+import pandas as pd
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Query, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -23,6 +26,40 @@ def _get_review_or_404(review_id: int, db: Session) -> Review:
 def list_studies(review_id: int, db: Session = Depends(get_db)):
     _get_review_or_404(review_id, db)
     return db.query(Study).filter(Study.review_id == review_id).order_by(Study.id).all()
+
+
+_ILLEGAL_XLSX = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+
+
+@router.get("/download")
+def download_studies(review_id: int, fmt: str = Query("xlsx", pattern="^(xlsx|csv)$"),
+                     db: Session = Depends(get_db)):
+    """Whole study database of the review, one column per field (re-importable)."""
+    review = _get_review_or_404(review_id, db)
+    studies = db.query(Study).filter(Study.review_id == review_id).order_by(Study.id).all()
+    cols = [c.name for c in Study.__table__.columns if c.name != "review_id"]
+    df = pd.DataFrame([{c: getattr(s, c) for c in cols} for s in studies], columns=cols)
+
+    buf = io.BytesIO()
+    if fmt == "csv":
+        buf.write(df.to_csv(index=False).encode("utf-8-sig"))
+        media = "text/csv; charset=utf-8"
+    else:
+        # Excel rejects control characters and caps cells at 32,767 characters.
+        df = df.apply(lambda col: col.map(
+            lambda v: _ILLEGAL_XLSX.sub("", v)[:32767] if isinstance(v, str) else v))
+        with pd.ExcelWriter(buf, engine="openpyxl") as xw:
+            df.to_excel(xw, index=False, sheet_name="Estudios")
+            ws = xw.sheets["Estudios"]
+            ws.freeze_panes = "A2"
+            for cell in ws[1]:
+                ws.column_dimensions[cell.column_letter].width = max(12, min(40, len(str(cell.value)) + 2))
+        media = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    buf.seek(0)
+
+    safe = re.sub(r"[^A-Za-z0-9]+", "_", review.title or "revision").strip("_")[:50] or "revision"
+    return StreamingResponse(buf, media_type=media, headers={
+        "Content-Disposition": f'attachment; filename="Base_estudios_{safe}.{fmt}"'})
 
 
 @router.post("/", response_model=StudyOut, status_code=status.HTTP_201_CREATED)
