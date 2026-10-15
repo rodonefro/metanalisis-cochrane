@@ -190,7 +190,7 @@ export default function ReviewEditor() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `Estrategias_Búsqueda_${review?.title?.replace(/\s+/g, '_') || 'review'}.xlsx`
+      a.download = `Estrategias_Busqueda_${review?.title?.replace(/\s+/g, '_') || 'review'}.xlsx`
       a.click()
       URL.revokeObjectURL(url)
       toast.success('Estrategias de búsqueda descargadas')
@@ -205,7 +205,7 @@ export default function ReviewEditor() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `Excluidos_TextoCompleto_${review?.title?.replace(/\s+/g, '_') || 'review'}.xlsx`
+      a.download = `Estudios_Excluidos_${review?.title?.replace(/\s+/g, '_') || 'review'}.xlsx`
       a.click()
       URL.revokeObjectURL(url)
       toast.success('Estudios excluidos descargados')
@@ -284,7 +284,7 @@ export default function ReviewEditor() {
             <Download size={14} /> Estrategias de Búsqueda (Excel)
           </button>
           <button onClick={handleExportExcludedStudies} className="btn-secondary text-xs">
-            <Download size={14} /> Excluidos a Texto Completo (Excel)
+            <Download size={14} /> Estudios Excluidos con motivo (Excel)
           </button>
         </div>
       </div>

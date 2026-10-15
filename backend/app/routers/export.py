@@ -1245,261 +1245,181 @@ def export_docx(review_id: int, db: Session = Depends(get_db)):
     )
 
 
-# ── Data exports: Excel files ───────────────────────────────────────────────
+# ── Data exports (Excel) ─────────────────────────────────────────────────────
+# Studies are grouped with services.prisma.classify, so every file matches the
+# PRISMA diagram box for box.
+
+_XLSX_ILLEGAL = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f]")
+_ROB_ES = {"low": "Bajo", "some_concerns": "Algunas dudas", "high": "Alto"}
+
+
+def _review_or_404(db: Session, review_id: int) -> Review:
+    review = db.query(Review).filter(Review.id == review_id).first()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+    return review
+
+
+def _study_n(s: Study):
+    return ((s.total_intervention or 0) + (s.total_control or 0)) or s.sample_size or None
+
+
+def _study_name(s: Study) -> str:
+    label = (s.study_label or "").strip()
+    if label and len(label) <= 40:
+        return label
+    first = (s.authors or label or "").split(",")[0].split(";")[0].strip()
+    return f"{first} {s.year or ''}".strip() or f"ID {s.id}"
+
+
+def _add_sheet(wb, title: str, heading: str, headers: list[str], widths: list[int],
+               rows: list[list], color: str = "005A9C", empty_note: str = ""):
+    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from openpyxl.utils import get_column_letter
+
+    ws = wb.create_sheet(title[:31])
+    ws.cell(row=1, column=1, value=heading).font = Font(bold=True, size=12)
+    side = Side(style="thin", color="BBBBBB")
+    border = Border(left=side, right=side, top=side, bottom=side)
+    for c, h in enumerate(headers, 1):
+        cell = ws.cell(row=3, column=c, value=h)
+        cell.font = Font(bold=True, color="FFFFFF")
+        cell.fill = PatternFill(start_color=color, end_color=color, fill_type="solid")
+        cell.alignment = Alignment(wrap_text=True, vertical="center")
+        cell.border = border
+        ws.column_dimensions[get_column_letter(c)].width = widths[c - 1]
+    for r, row in enumerate(rows, 4):
+        for c, v in enumerate(row, 1):
+            if isinstance(v, str):
+                v = _XLSX_ILLEGAL.sub("", v)[:32767]
+            cell = ws.cell(row=r, column=c, value=v)
+            cell.alignment = Alignment(wrap_text=True, vertical="top")
+            cell.border = border
+    if not rows and empty_note:
+        ws.cell(row=4, column=1, value=empty_note).font = Font(italic=True, color="888888")
+    ws.freeze_panes = "A4"
+    return ws
+
+
+def _xlsx_response(wb, name: str, review: Review) -> StreamingResponse:
+    buf = io.BytesIO()
+    wb.save(buf)
+    buf.seek(0)
+    filename = f"{name}_{_ascii_filename(review.title or 'revision')}_{datetime.utcnow().strftime('%Y%m%d')}.xlsx"
+    return StreamingResponse(
+        buf,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+def _new_workbook():
+    from openpyxl import Workbook
+    wb = Workbook()
+    wb.remove(wb.active)
+    return wb
+
 
 @router.get("/included-studies")
 def export_included_studies(review_id: int, db: Session = Depends(get_db)):
-    """Export included studies to Excel with key fields."""
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from ..services.prisma import classify
 
-    review = db.query(Review).filter(Review.id == review_id).first()
-    if not review:
-        raise HTTPException(status_code=404, detail="Review not found")
-
-    studies = eligible_studies(db, review_id)
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Estudios Incluidos"
-
-    # Header
-    headers = ["ID", "Etiqueta", "Autores", "Año", "Título", "Revista", "DOI",
-               "Diseño", "N", "Intervención/Comparación", "RoB"]
-    header_fill = PatternFill(start_color="005A9C", end_color="005A9C", fill_type="solid")
-    header_font = Font(bold=True, color="FFFFFF")
-    thin_border = Border(
-        left=Side(style='thin'),
-        right=Side(style='thin'),
-        top=Side(style='thin'),
-        bottom=Side(style='thin')
-    )
-
-    for col, header in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col)
-        cell.value = header
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.border = thin_border
-        cell.alignment = Alignment(wrap_text=True, vertical="center")
-
-    # Data rows
-    for row_idx, s in enumerate(studies, 2):
-        row_data = [
-            s.id,
-            s.study_label or "",
-            s.authors or "",
-            s.year or "",
-            s.title or "",
-            s.journal or "",
-            s.doi or "",
-            s.study_design or "",
-            s.sample_size or "",
-            f"{s.group_comparison or ''} | {s.intervention or ''}" if s.intervention else s.group_comparison or "",
-            s.rob_overall or ""
-        ]
-        for col_idx, value in enumerate(row_data, 1):
-            cell = ws.cell(row=row_idx, column=col_idx)
-            cell.value = value
-            cell.border = thin_border
-            cell.alignment = Alignment(wrap_text=True, vertical="top")
-
-    # Adjust column widths
-    ws.column_dimensions['A'].width = 6
-    ws.column_dimensions['B'].width = 16
-    ws.column_dimensions['C'].width = 18
-    ws.column_dimensions['D'].width = 8
-    ws.column_dimensions['E'].width = 28
-    ws.column_dimensions['F'].width = 16
-    ws.column_dimensions['G'].width = 14
-    ws.column_dimensions['H'].width = 14
-    ws.column_dimensions['I'].width = 8
-    ws.column_dimensions['J'].width = 20
-    ws.column_dimensions['K'].width = 10
-
-    # Freeze header row
-    ws.freeze_panes = "A2"
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-
-    safe_title = _ascii_filename(review.title or "revision")
-    filename = f"Estudios_Incluidos_{safe_title}_{datetime.utcnow().strftime('%Y%m%d')}.xlsx"
-    return StreamingResponse(
-        buf,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
-@router.get("/search-strategies")
-def export_search_strategies(review_id: int, db: Session = Depends(get_db)):
-    """Export search strategies and results from all databases."""
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-    from ..services.prisma import search_summary
-    from ..models import SearchDatabase
-
-    review = db.query(Review).filter(Review.id == review_id).first()
-    if not review:
-        raise HTTPException(status_code=404, detail="Review not found")
-
-    searches = db.query(SearchDatabase).filter(SearchDatabase.review_id == review_id).order_by(SearchDatabase.id).all()
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Estrategias de Búsqueda"
-
-    # Title and review info
-    ws['A1'].value = f"Estrategias de búsqueda — {review.title}"
-    ws['A1'].font = Font(bold=True, size=12)
-    ws.merge_cells('A1:G1')
-
-    ws['A3'].value = "Base de datos / Fuente"
-    ws['B3'].value = "Tipo"
-    ws['C3'].value = "Fecha de búsqueda"
-    ws['D3'].value = "Registros reportados"
-    ws['E3'].value = "Registros importados"
-    ws['F3'].value = "Duplicados encontrados"
-    ws['G3'].value = "Estrategia / Cadena de búsqueda"
-
-    header_fill = PatternFill(start_color="005A9C", end_color="005A9C", fill_type="solid")
-    header_font = Font(bold=True, color="FFFFFF")
-    thin_border = Border(
-        left=Side(style='thin'),
-        right=Side(style='thin'),
-        top=Side(style='thin'),
-        bottom=Side(style='thin')
-    )
-
-    for col in range(1, 8):
-        cell = ws.cell(row=3, column=col)
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.border = thin_border
-        cell.alignment = Alignment(wrap_text=True, vertical="center")
-
-    # Data rows
-    type_label = {"database": "Base de datos", "register": "Registro", "other": "Otros métodos"}
-    for row_idx, s in enumerate(searches, 4):
-        row_data = [
-            s.database_name,
-            type_label.get(s.source_type, s.source_type),
-            s.search_date or "",
-            s.results_count or "",
-            s.records_imported or 0,
-            s.duplicates_found or 0,
-            s.search_string or ""
-        ]
-        for col_idx, value in enumerate(row_data, 1):
-            cell = ws.cell(row=row_idx, column=col_idx)
-            cell.value = value
-            cell.border = thin_border
-            cell.alignment = Alignment(wrap_text=True, vertical="top")
-
-    # Column widths
-    ws.column_dimensions['A'].width = 20
-    ws.column_dimensions['B'].width = 14
-    ws.column_dimensions['C'].width = 16
-    ws.column_dimensions['D'].width = 14
-    ws.column_dimensions['E'].width = 14
-    ws.column_dimensions['F'].width = 14
-    ws.column_dimensions['G'].width = 40
-
-    ws.freeze_panes = "A4"
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-
-    safe_title = _ascii_filename(review.title or "revision")
-    filename = f"Estrategias_Búsqueda_{safe_title}_{datetime.utcnow().strftime('%Y%m%d')}.xlsx"
-    return StreamingResponse(
-        buf,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
+    review = _review_or_404(db, review_id)
+    studies = [s for s in db.query(Study).filter(Study.review_id == review_id).order_by(Study.id).all()
+               if classify(s) == "included"]
+    headers = ["ID", "Estudio", "Autores", "Año", "Título", "Revista", "DOI", "PMID", "Fuente(s)",
+               "Diseño", "N participantes", "Población", "Comparación de grupos",
+               "Eventos interv.", "Total interv.", "Eventos control", "Total control",
+               "Desenlaces de supervivencia", "Hallazgos clave", "Riesgo de sesgo global"]
+    widths = [6, 18, 26, 7, 45, 20, 22, 11, 18, 28, 11, 35, 30, 9, 9, 9, 9, 35, 40, 14]
+    rows = [[
+        s.id, _study_name(s), s.authors, s.year, s.title, s.journal, s.doi, s.pmid,
+        s.all_sources or s.source_database, s.study_design, _study_n(s),
+        s.patient_population, s.group_comparison,
+        s.events_intervention, s.total_intervention, s.events_control, s.total_control,
+        s.survival_outcomes, s.key_findings or s.findings, _ROB_ES.get(s.rob_overall or "", s.rob_overall),
+    ] for s in studies]
+    wb = _new_workbook()
+    _add_sheet(wb, "Estudios incluidos", f"Estudios incluidos ({len(rows)}) — {review.title}",
+               headers, widths, rows, empty_note="No hay estudios incluidos: realiza el cribado primero.")
+    return _xlsx_response(wb, "Estudios_Incluidos", review)
 
 
 @router.get("/excluded-studies")
 def export_excluded_studies(review_id: int, db: Session = Depends(get_db)):
-    """Export excluded studies at full-text stage with exclusion reasons."""
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+    from ..services.prisma import classify
 
-    review = db.query(Review).filter(Review.id == review_id).first()
-    if not review:
-        raise HTTPException(status_code=404, detail="Review not found")
+    review = _review_or_404(db, review_id)
+    all_studies = db.query(Study).filter(Study.review_id == review_id).order_by(Study.id).all()
+    full_text, screening = [], []
+    for s in all_studies:
+        box = classify(s)
+        if box == "not_retrieved":
+            full_text.append((s, "Texto completo no recuperado"))
+        elif box == "excluded_eligibility":
+            full_text.append((s, (s.exclusion_reason or "").strip() or "Motivo no registrado"))
+        elif box == "excluded_screening":
+            screening.append((s, (s.exclusion_reason or "").strip() or "Motivo no registrado"))
 
-    # Get studies excluded at full-text (screening_stage == 'full_text')
-    excluded = db.query(Study).filter(
-        Study.review_id == review_id,
-        Study.included == False,
-        Study.screening_stage == 'full_text'
-    ).order_by(Study.id).all()
+    headers = ["ID", "Estudio", "Autores", "Año", "Título", "Revista", "DOI", "Fuente(s)", "Motivo de exclusión"]
+    widths = [6, 18, 26, 7, 50, 20, 22, 18, 60]
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Excluidos a Texto Completo"
+    def rows(items):
+        return [[s.id, _study_name(s), s.authors, s.year, s.title, s.journal, s.doi,
+                 s.all_sources or s.source_database, reason] for s, reason in items]
 
-    # Title
-    ws['A1'].value = f"Estudios excluidos a texto completo — {review.title}"
-    ws['A1'].font = Font(bold=True, size=12)
-    ws.merge_cells('A1:F1')
-
-    # Headers
-    headers = ["ID", "Etiqueta", "Autores", "Año", "Título", "Motivo de exclusión"]
-    header_fill = PatternFill(start_color="C0392B", end_color="C0392B", fill_type="solid")
-    header_font = Font(bold=True, color="FFFFFF")
-    thin_border = Border(
-        left=Side(style='thin'),
-        right=Side(style='thin'),
-        top=Side(style='thin'),
-        bottom=Side(style='thin')
+    wb = _new_workbook()
+    _add_sheet(
+        wb, "Excluidos texto completo",
+        f"Estudios excluidos tras leer el texto completo ({len(full_text)}) — {review.title}",
+        headers, widths, rows(full_text), color="C0392B",
+        empty_note=("Ningún estudio tiene registrada la exclusión en la etapa de texto completo. "
+                    "Las exclusiones del cribado están en la hoja 'Excluidos en cribado'. Para moverlas aquí, "
+                    "marca la etapa 'Texto completo' en el Gestor de referencias."),
     )
-
-    for col, header in enumerate(headers, 1):
-        cell = ws.cell(row=3, column=col)
-        cell.value = header
-        cell.fill = header_fill
-        cell.font = header_font
-        cell.border = thin_border
-        cell.alignment = Alignment(wrap_text=True, vertical="center")
-
-    # Data rows
-    for row_idx, s in enumerate(excluded, 4):
-        row_data = [
-            s.id,
-            s.study_label or "",
-            s.authors or "",
-            s.year or "",
-            s.title or "",
-            s.exclusion_reason or ""
-        ]
-        for col_idx, value in enumerate(row_data, 1):
-            cell = ws.cell(row=row_idx, column=col_idx)
-            cell.value = value
-            cell.border = thin_border
-            cell.alignment = Alignment(wrap_text=True, vertical="top")
-
-    # Column widths
-    ws.column_dimensions['A'].width = 6
-    ws.column_dimensions['B'].width = 16
-    ws.column_dimensions['C'].width = 18
-    ws.column_dimensions['D'].width = 8
-    ws.column_dimensions['E'].width = 28
-    ws.column_dimensions['F'].width = 32
-
-    ws.freeze_panes = "A4"
-
-    buf = io.BytesIO()
-    wb.save(buf)
-    buf.seek(0)
-
-    safe_title = _ascii_filename(review.title or "revision")
-    filename = f"Excluidos_TextoCompleto_{safe_title}_{datetime.utcnow().strftime('%Y%m%d')}.xlsx"
-    return StreamingResponse(
-        buf,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    _add_sheet(
+        wb, "Excluidos en cribado",
+        f"Estudios excluidos en el cribado de título/resumen ({len(screening)}) — {review.title}",
+        headers, widths, rows(screening), color="7F8C8D",
+        empty_note="No hay estudios excluidos en el cribado de título/resumen.",
     )
+    return _xlsx_response(wb, "Estudios_Excluidos", review)
+
+
+@router.get("/search-strategies")
+def export_search_strategies(review_id: int, db: Session = Depends(get_db)):
+    from ..models import SearchDatabase
+    from ..services.prisma import compute_prisma
+
+    review = _review_or_404(db, review_id)
+    searches = (db.query(SearchDatabase).filter(SearchDatabase.review_id == review_id)
+                .order_by(SearchDatabase.id).all())
+    studies = db.query(Study).filter(Study.review_id == review_id).all()
+    flow = compute_prisma(review, studies, searches)
+
+    type_label = {"database": "Base de datos", "register": "Registro", "other": "Otros métodos"}
+    rows = [[
+        sd.database_name, type_label.get(sd.source_type or "database", sd.source_type),
+        sd.search_date or "No registrada", sd.results_count, sd.records_imported or 0,
+        sd.duplicates_found or 0, sd.search_string or "No registrada",
+    ] for sd in searches]
+    # Sources present on the records but never logged as a search still go in the
+    # file, so the counts match the PRISMA diagram.
+    logged = {sd.database_name.strip().lower() for sd in searches}
+    for src in flow["sources"]:
+        if src["name"].strip().lower() not in logged:
+            rows.append([src["name"], type_label["database" if src["type"] == "database" else "other"],
+                         "No registrada", None, src["n"], None,
+                         "No registrada (fuente tomada de los registros importados; agrega la búsqueda "
+                         "con su fecha y cadena en el Gestor de referencias)"])
+
+    headers = ["Base de datos / Fuente", "Tipo", "Fecha de búsqueda", "Registros reportados por la base",
+               "Registros importados", "Duplicados encontrados", "Estrategia / cadena de búsqueda completa"]
+    wb = _new_workbook()
+    ws = _add_sheet(wb, "Estrategias de búsqueda", f"Estrategias de búsqueda — {review.title}",
+                    headers, [26, 15, 16, 14, 12, 12, 90], rows,
+                    empty_note="No hay búsquedas ni registros importados.")
+    total_row = len(rows) + 5
+    ws.cell(row=total_row, column=1, value="Total identificados (diagrama PRISMA)")
+    ws.cell(row=total_row, column=5, value=flow["identified"])
+    return _xlsx_response(wb, "Estrategias_Busqueda", review)
