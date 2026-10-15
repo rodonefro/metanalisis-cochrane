@@ -50,13 +50,32 @@ def _rayyan_decision(notes: str | None) -> str | None:
     return {"included": "include", "excluded": "exclude", "maybe": "maybe"}[m.group(1).lower()] if m else None
 
 
+NOT_IN_INCLUDED_BASE = "No figura en la base de estudios incluidos"
+
+
+def _mark_included(s: Study) -> None:
+    s.included = True
+    s.screening_reviewed = True
+    s.screening_decision = "include"
+    s.screening_stage = "full_text"
+    s.full_text_status = "retrieved"
+    s.exclusion_reason = None
+
+
 def import_records(db: Session, review_id: int, records: list[dict], default_source: str,
-                   source_type: str = "database") -> dict:
+                   source_type: str = "database", role: str = "found") -> dict:
     """Add records to the review, merging duplicates (DOI → PMID → normalised title).
 
-    Every imported record is logged against its search source so the PRISMA
-    identification and duplicate counts are exact.
+    role="found": records from a search; each is logged against its search source
+    so the PRISMA identification and duplicate counts are exact.
+    role="included": the final set of included studies (e.g. an Elicit extraction).
+    Its records are not a new search: they are matched to the records already found,
+    marked as included after full text, and every other record is excluded.
+    role="auto": "included" when every row of the file is flagged as included.
     """
+    if role == "auto":
+        role = ("included" if records and all(r.get("screening_decision") == "include" for r in records)
+                else "found")
     valid = {c.key for c in Study.__table__.columns} - {"id", "review_id"}
     existing = db.query(Study).filter(Study.review_id == review_id).all()
     index: dict[str, Study] = {}
@@ -66,10 +85,13 @@ def import_records(db: Session, review_id: int, records: list[dict], default_sou
 
     imported, dups = Counter(), Counter()
     added = merged = 0
+    in_base: set[int] = set()
+    new_in_base: list[Study] = []
     for rec in records:
         source = (rec.pop("source_database", None) or default_source or "").strip() or default_source
+        file_decision = rec.pop("screening_decision", None)
         rec = {k: v for k, v in rec.items() if k in valid}
-        decision = _rayyan_decision(rec.get("notes"))
+        decision = file_decision or _rayyan_decision(rec.get("notes"))
         imported[source] += 1
         match = next((index[k] for k in dedup_keys(rec) if k in index), None)
         if match:
@@ -78,29 +100,58 @@ def import_records(db: Session, review_id: int, records: list[dict], default_sou
             for k, v in rec.items():
                 if v not in (None, "") and getattr(match, k, None) in (None, ""):
                     setattr(match, k, v)
-            match.all_sources = add_source(match.all_sources or match.source_database, source)
+            if role == "included":
+                _mark_included(match)
+                in_base.add(id(match))
+            else:
+                match.all_sources = add_source(match.all_sources or match.source_database, source)
             continue
         study = Study(review_id=review_id, **rec)
         study.source_database = source
         study.all_sources = source
-        if decision:
+        if role == "included":
+            _mark_included(study)
+            in_base.add(id(study))
+            new_in_base.append(study)
+        elif decision:
             study.screening_decision = decision
             study.screening_reviewed = True
-            study.screening_stage = "title_abstract"
+            study.screening_stage = study.screening_stage or "title_abstract"
             study.included = decision == "include"
         db.add(study)
         for k in dedup_keys(rec):
             index.setdefault(k, study)
         added += 1
 
-    for source, n in imported.items():
-        sd = _get_or_create_search(db, review_id, source, source_type)
-        sd.records_imported = (sd.records_imported or 0) + n
-        sd.duplicates_found = (sd.duplicates_found or 0) + dups[source]
+    excluded_now = 0
+    if role == "included":
+        # The included base is authoritative: whatever else was found is excluded.
+        # Records that had passed title/abstract screening count as excluded at full text.
+        for s in existing:
+            if id(s) in in_base or effective_decision(s) == "exclude":
+                continue
+            stage = "full_text" if effective_decision(s) in ("include", "maybe") else "title_abstract"
+            s.included = False
+            s.screening_reviewed = True
+            s.screening_decision = "exclude"
+            s.screening_stage = stage
+            s.exclusion_reason = NOT_IN_INCLUDED_BASE
+            excluded_now += 1
+        # Included studies that were not in the found base still need a PRISMA source.
+        if new_in_base:
+            sd = _get_or_create_search(db, review_id, default_source, "other")
+            sd.records_imported = (sd.records_imported or 0) + len(new_in_base)
+    else:
+        for source, n in imported.items():
+            sd = _get_or_create_search(db, review_id, source, source_type)
+            sd.records_imported = (sd.records_imported or 0) + n
+            sd.duplicates_found = (sd.duplicates_found or 0) + dups[source]
 
     db.commit()
     return {"records": sum(imported.values()), "added": added, "duplicates_merged": merged,
-            "by_source": dict(imported)}
+            "by_source": dict(imported), "role": role,
+            "included": len(in_base), "matched_to_found": len(in_base) - len(new_in_base),
+            "excluded_not_in_base": excluded_now}
 
 
 # ── Search log ─────────────────────────────────────────────────────────────────

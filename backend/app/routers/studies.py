@@ -77,9 +77,13 @@ async def upload_studies(
     review_id: int,
     file: UploadFile = File(...),
     source_database: str | None = Form(None),
+    role: str = Form("auto"),
     db: Session = Depends(get_db),
 ):
     """Upload an Excel or CSV file to bulk-add studies to a review.
+
+    role: "found" (search results), "included" (final included studies, e.g. an
+    Elicit extraction) or "auto" (included when every row is flagged as included).
 
     Accepts plain templates as well as exports from Elicit AI or SciSpace AI —
     columns are auto-detected by name (see file_parser._COLUMN_MAP). The optional
@@ -97,9 +101,13 @@ async def upload_studies(
     # in the UI, otherwise the file name. Duplicates are merged and logged so the
     # PRISMA flow stays exact.
     default_source = source_database or re.sub(r"\.[^.]+$", "", file.filename or "Importación")
-    result = import_records(db, review_id, studies_data, default_source)
+    if role not in ("auto", "found", "included"):
+        raise HTTPException(status_code=422, detail="role debe ser auto, found o included")
+    result = import_records(db, review_id, studies_data, default_source, role=role)
     return {"created": result["added"], "duplicates_merged": result["duplicates_merged"],
-            "by_source": result["by_source"]}
+            "by_source": result["by_source"], "role": result["role"], "included": result["included"],
+            "matched_to_found": result["matched_to_found"],
+            "excluded_not_in_base": result["excluded_not_in_base"]}
 
 
 @router.post("/upload-merge", status_code=status.HTTP_201_CREATED)
@@ -127,7 +135,7 @@ async def upload_merge_studies(
         except ValueError as exc:
             errors.append(f"{filename}: {exc}")
             continue
-        result = import_records(db, review_id, studies_data, source_db_name)
+        result = import_records(db, review_id, studies_data, source_db_name, role="auto")
         total_added += result["added"]
         total_merged += result["duplicates_merged"]
 

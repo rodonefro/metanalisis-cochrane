@@ -217,11 +217,22 @@ export const updateStudy = (reviewId: number, studyId: number, data: Partial<Stu
   api.put<Study>(`/reviews/${reviewId}/studies/${studyId}`, data).then(r => r.data)
 export const deleteStudy = (reviewId: number, studyId: number) =>
   api.delete(`/reviews/${reviewId}/studies/${studyId}`)
-export const uploadStudies = (reviewId: number, file: File, sourceDatabase?: string) => {
+export type ImportRole = 'auto' | 'found' | 'included'
+export interface UploadResult {
+  created: number
+  duplicates_merged: number
+  by_source: Record<string, number>
+  role: 'found' | 'included'
+  included: number
+  matched_to_found: number
+  excluded_not_in_base: number
+}
+export const uploadStudies = (reviewId: number, file: File, sourceDatabase?: string, role: ImportRole = 'auto') => {
   const form = new FormData()
   form.append('file', file)
+  form.append('role', role)
   if (sourceDatabase) form.append('source_database', sourceDatabase)
-  return api.post(`/reviews/${reviewId}/studies/upload`, form).then(r => r.data)
+  return api.post<UploadResult>(`/reviews/${reviewId}/studies/upload`, form).then(r => r.data)
 }
 
 export const downloadStudies = (reviewId: number, fmt: 'xlsx' | 'csv') =>

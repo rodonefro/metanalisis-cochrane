@@ -4,7 +4,7 @@ import toast from 'react-hot-toast'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   deleteStudy, uploadStudies, createStudy, mergeStudyDatabases, downloadStudies, aiScreenStudies, aiExtractData, updateStudy, resetScreening, aiAssessRob, API_BASE,
-  type Study, type ExtractionReportItem,
+  type Study, type ExtractionReportItem, type ImportRole,
 } from '../services/api'
 import StudiesDatabaseModal from './StudiesDatabaseModal'
 
@@ -28,6 +28,7 @@ export default function StudiesTable({ reviewId, studies }: Props) {
   const [showDb, setShowDb] = useState(false)
   const [newStudy, setNewStudy] = useState<Partial<Study>>({ included: true })
   const [importSource, setImportSource] = useState('')
+  const [importRole, setImportRole] = useState<ImportRole>('auto')
   const [extractReport, setExtractReport] = useState<ExtractionReportItem[] | null>(null)
   const [downloading, setDownloading] = useState<'xlsx' | 'csv' | null>(null)
 
@@ -52,9 +53,18 @@ export default function StudiesTable({ reviewId, studies }: Props) {
   }
 
   const uploadMutation = useMutation({
-    mutationFn: (file: File) => uploadStudies(reviewId, file, importSource || undefined),
-    onSuccess: (res: any) => {
-      toast.success(`${res.created} estudio(s) importado(s)`)
+    mutationFn: (file: File) => uploadStudies(reviewId, file, importSource || undefined, importRole),
+    onSuccess: (res) => {
+      if (res.role === 'included') {
+        toast.success(
+          `Base de estudios incluidos: ${res.included} incluidos` +
+          (res.matched_to_found ? ` (${res.matched_to_found} identificados en la base de encontrados)` : '') +
+          (res.excluded_not_in_base ? `; ${res.excluded_not_in_base} encontrados marcados como excluidos` : ''),
+          { duration: 8000 },
+        )
+      } else {
+        toast.success(`${res.created} estudio(s) importado(s)` + (res.duplicates_merged ? `; ${res.duplicates_merged} duplicados fusionados` : ''))
+      }
       invalidate()
       setOpen(true)
     },
@@ -271,6 +281,16 @@ export default function StudiesTable({ reviewId, studies }: Props) {
                 <option value="">Formato: Automático</option>
                 <option value="Elicit IA">Elicit IA</option>
                 <option value="SciSpace IA">SciSpace IA</option>
+              </select>
+              <select
+                className="input text-xs py-1.5 w-auto"
+                value={importRole}
+                onChange={(e) => setImportRole(e.target.value as ImportRole)}
+                title="Encontrados: resultados de la búsqueda. Incluidos: la base final de estudios incluidos (p. ej. extracción de Elicit); se cruza con los encontrados y el resto se marca como excluido."
+              >
+                <option value="auto">Base: Detectar automáticamente</option>
+                <option value="found">Base: Estudios encontrados (búsqueda)</option>
+                <option value="included">Base: Estudios incluidos</option>
               </select>
               <button
                 type="button"

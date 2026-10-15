@@ -224,6 +224,11 @@ _COLUMN_MAP = {
     "notas":                  "notes",
 
     # ── ELICIT (elicit.com) export columns ───────────────────────────────────
+    "paper_id":                     "notes",
+    "mortality_outcomes":           "survival_outcomes",
+    "survival":                     "survival_outcomes",
+    "doi_link":                     "url",
+    'reasoning_for_"study_design"': "reasoning_study_design",
     "number_of_participants":       "sample_size",
     "number of participants":       "sample_size",
     "n_participants":               "sample_size",
@@ -358,6 +363,30 @@ def _normalise_col(col: str) -> str:
     return col.strip().lower().replace(" ", "_").replace("-", "_")
 
 
+# Columns carrying a per-row inclusion decision (Elicit "Included in report", our own export).
+_DECISION_COLUMNS = {"included_in_report", "included", "incluido", "incluir", "screening_decision"}
+_YES = {"yes", "y", "si", "sí", "true", "1", "include", "included", "incluido", "incluir"}
+_NO = {"no", "n", "false", "0", "exclude", "excluded", "excluido", "excluir"}
+
+# Study columns accepted under their own name (round trip of the app's own download).
+_DIRECT_FIELDS = {
+    "exclusion_reason", "screening_stage", "full_text_status", "rob_notes", "analysis_suitability",
+    "suitability_note", "extraction_evidence", "all_sources", "age_mean", "percent_female",
+    "inclusion_criteria", "insights",
+}
+# Columns that only make sense inside the app's database and are never imported.
+_INTERNAL_COLUMNS = {"id", "review_id", "created_at", "updated_at", "screening_reviewed"}
+
+
+def _decision(value: Any) -> str | None:
+    s = str(value or "").strip().lower()
+    return "include" if s in _YES else "exclude" if s in _NO else None
+
+
+def _blank(v: Any) -> bool:
+    return v is None or str(v).strip() in ("", "nan", "None")
+
+
 def _coerce(value: Any, field: str) -> Any:
     if value is None or (isinstance(value, float) and math.isnan(value)):
         return None
@@ -428,22 +457,34 @@ def parse_file(content: bytes, filename: str) -> list[dict]:
     # Build rename map; if two user-columns map to the same target, keep first
     rename_map: dict[str, str] = {}
     seen_targets: set[str] = set()
+    decision_col = None
+    extra_cols: list[str] = []      # kept as text so no column of the file is lost
+    reasoning_cols: list[str] = []  # the tool's own reasoning, kept apart from the paper's text
     for col in df.columns:
         norm = _normalise_col(str(col))
-        if norm in _COLUMN_MAP:
-            target = _COLUMN_MAP[norm]
-            if target not in seen_targets:
-                rename_map[col] = target
-                seen_targets.add(target)
-    df.rename(columns=rename_map, inplace=True)
+        target = _COLUMN_MAP.get(norm) or (norm if norm in _DIRECT_FIELDS else None)
+        if norm in _DECISION_COLUMNS:
+            decision_col = decision_col or col
+        elif target and target not in seen_targets:
+            rename_map[col] = target
+            seen_targets.add(target)
+        elif norm in _INTERNAL_COLUMNS or norm.startswith("unnamed:"):
+            continue
+        elif norm.startswith("reasoning_for"):
+            reasoning_cols.append(col)
+        else:
+            extra_cols.append(col)
+    decision_values = df[decision_col] if decision_col is not None else None
+    extra = df[extra_cols + reasoning_cols].copy()
+    df = df.rename(columns=rename_map)
 
     # Drop remaining duplicate column names (keep first)
     df = df.loc[:, ~df.columns.duplicated(keep="first")]
 
-    known_fields = [f for f in set(_COLUMN_MAP.values()) if f in df.columns]
+    known_fields = [f for f in seen_targets if f in df.columns]
 
     studies = []
-    for _, row in df.iterrows():
+    for idx, row in df.iterrows():
         study: dict = {}
         for field in known_fields:
             raw = row[field]
@@ -455,6 +496,16 @@ def parse_file(content: bytes, filename: str) -> list[dict]:
 
         if not study:
             continue
+
+        for target, cols in (("study_results", extra_cols), ("insights", reasoning_cols)):
+            parts = [f"{c}:\n{str(extra.at[idx, c]).strip()}" for c in cols if not _blank(extra.at[idx, c])]
+            if parts:
+                study[target] = "\n\n".join(([study[target]] if study.get(target) else []) + parts)
+
+        if decision_values is not None:
+            d = _decision(decision_values.at[idx])
+            if d:
+                study["screening_decision"] = d
 
         # Auto-build study_label if missing
         if not study.get("study_label"):

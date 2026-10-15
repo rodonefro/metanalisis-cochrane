@@ -627,6 +627,8 @@ def screen_studies_with_ai(review: dict, studies: list[dict]) -> dict:
 _EXTRACT_SOURCE_FIELDS = [
     ("abstract_text", "Resumen"),
     ("study_results", "Resultados"),
+    ("patient_population", "Población"),
+    ("study_design", "Diseño"),
     ("key_findings", "Hallazgos clave"),
     ("findings", "Hallazgos"),
     ("survival_outcomes", "Desenlaces de supervivencia"),
