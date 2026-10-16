@@ -18,7 +18,7 @@ from matplotlib.transforms import blended_transform_factory
 
 from typing import Optional as _Opt
 
-from .statistics import MetaResult, back_transform
+from .statistics import MetaResult, back_transform, measure_label as measure_label_of
 
 
 def _short_label(text, max_chars: int = 38) -> str:
@@ -76,13 +76,14 @@ def _forest_plot_inner(result: MetaResult, title: str,
     is what actually reaches paper. Anything tuned to "look right" only in a
     full-screen browser preview will print unreadably small.
     """
-    bt = lambda v: back_transform(v, result.effect_measure)
+    is_prop = result.effect_measure == "PROP"
+    # Proportions are shown as percentages; they have no "no effect" line.
+    bt = ((lambda v: 100 * back_transform(v, "PROP")) if is_prop
+          else (lambda v: back_transform(v, result.effect_measure)))
     is_log = result.effect_measure in ("OR", "RR")
     null = null_value if null_value is not None else (1.0 if is_log else 0.0)
-    # "PRECALCULATED" is a long internal code name, not a real effect-measure
-    # abbreviation like OR/RR/MD — too wide for the header column at this font
-    # size, so it gets a short display label instead.
-    measure_label = "TE" if result.effect_measure == "PRECALCULATED" else result.effect_measure
+    measure_label = "% (IC 95%)" if is_prop else measure_label_of(result.effect_measure)
+    fmt = (lambda v: f"{v:.1f}") if is_prop else (lambda v: f"{v:.2f}")
 
     F_HEADER = 17.5
     F_LABEL  = 15.5
@@ -114,7 +115,7 @@ def _forest_plot_inner(result: MetaResult, title: str,
     # Column headers
     ax.text(LABEL_X, k + 1.5, "Estudio", fontsize=F_HEADER, fontweight="bold",
             ha="right", va="center", transform=figx)
-    ax.text(CI_X, k + 1.5, f"{measure_label} (IC 95%)", fontsize=F_HEADER,
+    ax.text(CI_X, k + 1.5, measure_label if is_prop else f"{measure_label} (IC 95%)", fontsize=F_HEADER,
             fontweight="bold", ha="left", va="center", transform=figx)
     ax.text(WEIGHT_X, k + 1.5, "Peso (%)", fontsize=F_HEADER, fontweight="bold",
             ha="right", va="center", transform=figx)
@@ -124,7 +125,9 @@ def _forest_plot_inner(result: MetaResult, title: str,
     for s in studies:
         all_vals.extend([bt(s.ci_lower), bt(s.ci_upper)])
     all_vals.extend([bt(result.pooled_lower), bt(result.pooled_upper)])
-    if is_log:
+    if is_prop:
+        x_lo, x_hi = 0.0, 100.0
+    elif is_log:
         x_lo = max(0.01, min(all_vals) * 0.7)
         x_hi = max(all_vals) * 1.4
         ax.set_xscale("log")
@@ -133,8 +136,10 @@ def _forest_plot_inner(result: MetaResult, title: str,
         x_lo = min(all_vals) - span * 0.15
         x_hi = max(all_vals) + span * 0.15
 
-    # Null line
-    ax.axvline(x=null, color="black", linewidth=1.1, linestyle="--", alpha=0.6)
+    if is_prop:
+        ax.axvline(x=bt(result.pooled_effect), color="#c0392b", linewidth=1.0, linestyle=":", alpha=0.7)
+    else:
+        ax.axvline(x=null, color="black", linewidth=1.1, linestyle="--", alpha=0.6)
 
     # Study rows
     for i, (s, y) in enumerate(zip(studies, y_positions)):
@@ -152,7 +157,7 @@ def _forest_plot_inner(result: MetaResult, title: str,
         # Labels
         ax.text(LABEL_X, y, _short_label(s.study_label), fontsize=F_LABEL, ha="right", va="center",
                 transform=figx)
-        ci_text = f"{effect:.2f} [{lo:.2f}, {hi:.2f}]"
+        ci_text = f"{fmt(effect)} [{fmt(lo)}, {fmt(hi)}]"
         ax.text(CI_X, y, ci_text, fontsize=F_DATA, ha="left", va="center",
                 transform=figx)
         ax.text(WEIGHT_X, y, f"{weight:.1f}", fontsize=F_DATA, ha="right", va="center",
@@ -181,7 +186,7 @@ def _forest_plot_inner(result: MetaResult, title: str,
     ax.text(LABEL_X, diamond_y, f"Total (efectos {model_es}, k={result.k})",
             fontsize=F_POOLED, fontweight="bold", ha="right", va="center",
             transform=figx)
-    ci_pooled = f"{p_eff:.2f} [{p_lo:.2f}, {p_hi:.2f}]"
+    ci_pooled = f"{fmt(p_eff)} [{fmt(p_lo)}, {fmt(p_hi)}]"
     ax.text(CI_X, diamond_y, ci_pooled, fontsize=F_POOLED, fontweight="bold",
             ha="left", va="center", transform=figx)
 
@@ -196,8 +201,11 @@ def _forest_plot_inner(result: MetaResult, title: str,
     ax.set_xlim(x_lo, x_hi)
     ax.set_ylim(-2.0, k + 2)
     ax.set_yticks([])
-    ax.set_xlabel(f"Favorece control  ←  {measure_label}  →  Favorece intervención",
-                  fontsize=F_AXIS)
+    if is_prop:
+        ax.set_xlabel("Proporción de participantes con el desenlace (%)", fontsize=F_AXIS)
+    else:
+        ax.set_xlabel(f"Favorece control  ←  {measure_label}  →  Favorece intervención",
+                      fontsize=F_AXIS)
     ax.tick_params(axis="x", labelsize=F_AXIS)
     if title:
         import textwrap as _textwrap
@@ -218,12 +226,17 @@ def generate_funnel_plot(result: MetaResult, title: str = "") -> str:
     gc.collect()
     bt = lambda v: back_transform(v, result.effect_measure)
     is_log = result.effect_measure in ("OR", "RR")
+    is_prop = result.effect_measure == "PROP"
     null = 1.0 if is_log else 0.0
     pooled = bt(result.pooled_effect)
 
     effects = [bt(s.effect) for s in result.studies]
     se_values = [math.sqrt(s.variance) for s in result.studies]
-    if is_log:
+    if is_prop:
+        # Logit scale; the funnel is centred on the pooled estimate (no null value).
+        effects = [s.effect for s in result.studies]
+        pooled_log = null_log = result.pooled_effect
+    elif is_log:
         # se on log scale, effect on original scale — keep effect on log for funnel
         effects = [math.log(max(e, 1e-10)) for e in effects]
         pooled_log = result.pooled_effect
@@ -243,15 +256,18 @@ def generate_funnel_plot(result: MetaResult, title: str = "") -> str:
         ax.plot(x_lo, se_range, "b--", linewidth=0.8, alpha=0.5)
         ax.plot(x_hi, se_range, "b--", linewidth=0.8, alpha=0.5)
 
-    ax.axvline(x=null_log, color="gray", linewidth=0.8, linestyle=":")
+    if not is_prop:
+        ax.axvline(x=null_log, color="gray", linewidth=0.8, linestyle=":")
     ax.axvline(x=pooled_log, color="#c0392b", linewidth=1.2, linestyle="--",
-               label=f"Pooled {result.effect_measure}")
+               label=f"{measure_label_of(result.effect_measure)} combinada" if is_prop
+               else f"Pooled {result.effect_measure}")
 
     ax.scatter(effects, se_values, color="#2980b9", s=70, alpha=0.8, zorder=3)
 
     ax.invert_yaxis()
     ax.set_ylabel("Error estándar", fontsize=14)
-    label = f"log({result.effect_measure})" if is_log else result.effect_measure
+    label = ("logit(proporción)" if is_prop
+             else f"log({result.effect_measure})" if is_log else result.effect_measure)
     ax.set_xlabel(label, fontsize=14)
     ax.tick_params(labelsize=12.5)
     ax.set_title(title or "Funnel Plot", fontsize=17, fontweight="bold")
@@ -710,7 +726,19 @@ def generate_grade_table(result_dict: dict, studies: list, outcome: str = "") ->
 
     pub_rating, pub_color = ("No detectado", GREEN) if k >= 5 else ("No detectado*", AMBER)
 
-    downgrades = rob_pts + incon_pts + impr_pts  # indirectness fixed at 0; publication bias is informational, not scored
+    # GRADE: randomised trials start at high certainty, any other design at low.
+    def _randomised(s: dict) -> bool:
+        d = f"{s.get('study_design') or ''} {s.get('reasoning_study_design') or ''}".lower()
+        if "non-random" in d or "no aleatori" in d:
+            return False
+        return any(t in d for t in ("random", "aleatori", "rct", "eca"))
+    all_rct = bool(studies) and all(_randomised(s) for s in studies)
+    design_pts = 0 if all_rct else 2
+    design_rating = ("Ensayos aleatorizados (certeza inicial alta)" if all_rct
+                     else "No aleatorizados (certeza inicial baja)")
+
+    # indirectness fixed at 0; publication bias is informational, not scored
+    downgrades = design_pts + rob_pts + incon_pts + impr_pts
     quality_labels = ["⊕⊕⊕⊕  ALTA", "⊕⊕⊕◯  MODERADA", "⊕⊕◯◯  BAJA", "⊕◯◯◯  MUY BAJA"]
     quality_colors = [GREEN, BLUE, AMBER, RED]
     q_idx = min(downgrades, 3)
@@ -719,7 +747,10 @@ def generate_grade_table(result_dict: dict, studies: list, outcome: str = "") ->
 
     effect_str = "—"
     if effect is not None and ci_lo is not None and ci_hi is not None:
-        effect_str = f"{em} {effect:.2f}  (IC 95%  {ci_lo:.2f} – {ci_hi:.2f})"
+        if em == "PROP":
+            effect_str = f"Proporción {100 * effect:.1f} %  (IC 95%  {100 * ci_lo:.1f} – {100 * ci_hi:.1f})"
+        else:
+            effect_str = f"{measure_label_of(em)} {effect:.2f}  (IC 95%  {ci_lo:.2f} – {ci_hi:.2f})"
 
     # ── Font sizes (large — see module-level rationale on print shrinkage) ──
     F_TITLE, F_SUBTITLE = 22, 15.5
@@ -734,6 +765,9 @@ def generate_grade_table(result_dict: dict, studies: list, outcome: str = "") ->
         ("Estimación\ndel efecto",
          effect_str,
          "#EAF3FB"),
+        ("Diseño de\nlos estudios",
+         design_rating,
+         (GREEN if all_rct else AMBER) + "2A"),
         ("Riesgo de sesgo",
          rob_rating,
          rob_color + "2A"),

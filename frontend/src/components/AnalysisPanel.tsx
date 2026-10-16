@@ -390,10 +390,12 @@ export default function AnalysisPanel({ reviewId }: Props) {
                   { label: 'Estudios (k)', value: results.k },
                   { label: 'Participantes (N)', value: results.total_n },
                   {
-                    label: `${results.effect_measure} combinado`,
-                    value: results.pooled
-                      ? `${results.pooled.effect?.toFixed(2)} [${results.pooled.ci_lower?.toFixed(2)}, ${results.pooled.ci_upper?.toFixed(2)}]`
-                      : '—',
+                    label: results.effect_measure === 'PROP' ? 'Proporción combinada' : `${results.effect_measure} combinado`,
+                    value: !results.pooled
+                      ? '—'
+                      : results.effect_measure === 'PROP'
+                      ? `${(results.pooled.effect * 100).toFixed(1)} % [${(results.pooled.ci_lower * 100).toFixed(1)}, ${(results.pooled.ci_upper * 100).toFixed(1)}]`
+                      : `${results.pooled.effect?.toFixed(2)} [${results.pooled.ci_lower?.toFixed(2)}, ${results.pooled.ci_upper?.toFixed(2)}]`,
                   },
                   { label: 'Heterogeneidad I²', value: `${results.heterogeneity?.I2?.toFixed(0)}%` },
                 ].map(({ label, value }) => (

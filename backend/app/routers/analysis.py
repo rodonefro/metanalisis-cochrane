@@ -54,6 +54,8 @@ def run_analysis(review_id: int, db: Session = Depends(get_db)):
     except ValueError:
         # Fallback: studies that report an effect estimate with its 95% CI (in the review's measure)
         try:
+            if effect_measure == "PROP":
+                raise ValueError("proportions have no precalculated fallback")
             result = run_meta_analysis(study_data, "PRECALCULATED", model_type, precalc_as=effect_measure)
             effect_measure = result.effect_measure
         except ValueError:
@@ -61,6 +63,7 @@ def run_analysis(review_id: int, db: Session = Depends(get_db)):
                 "OR": "eventos y total por grupo", "RR": "eventos y total por grupo",
                 "RD": "eventos y total por grupo", "MD": "media, DE y n por grupo",
                 "SMD": "media, DE y n por grupo",
+                "PROP": "eventos y total del grupo de la intervención",
             }.get(effect_measure, "datos por grupo")
             # Earlier results no longer describe the current set of included studies.
             stale = db.query(Analysis).filter(Analysis.review_id == review_id).delete()
@@ -231,23 +234,24 @@ def get_grade_table(review_id: int, db: Session = Depends(get_db)):
 def get_rob_plot(review_id: int, db: Session = Depends(get_db)):
     """Generate the Cochrane RoB 2 risk-of-bias traffic-light plot + AI interpretation.
 
-    Unlike forest/funnel/grade, this doesn't depend on the meta-analysis
-    result — only on each study's rob_* domain ratings — but it's still
-    stored on the latest Analysis row (where rob_plot_b64 lives) so it
-    persists for the PDF export the same way the other plots do.
+    It only depends on each study's rob_* ratings, so it works without a
+    meta-analysis; when one exists the image is also stored on it.
     """
     review = db.query(Review).filter(Review.id == review_id).first()
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")
-    analysis = _get_latest_or_404(review_id, db)
-    studies = _study_dicts(review_id, db)
+    studies = [s for s in _study_dicts(review_id, db)
+               if any(s.get(k) for k in (*ROB_DOMAIN_KEYS, "rob_overall"))]
     if not studies:
-        raise HTTPException(status_code=422, detail="No hay estudios incluidos con datos de riesgo de sesgo.")
+        raise HTTPException(status_code=422, detail="No hay estudios incluidos con riesgo de sesgo evaluado.")
 
     try:
         b64 = generate_rob_traffic_light(studies)
-        analysis.rob_plot_b64 = b64
-        db.commit()
+        analysis = (db.query(Analysis).filter(Analysis.review_id == review_id)
+                    .order_by(Analysis.created_at.desc()).first())
+        if analysis:
+            analysis.rob_plot_b64 = b64
+            db.commit()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Error generando el gráfico de riesgo de sesgo: {exc}")
 

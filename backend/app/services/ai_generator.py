@@ -5,6 +5,7 @@ Generates Cochrane-format review sections based on review context and study data
 import anthropic
 
 from ..config import settings
+from .statistics import measure_label
 
 _client: anthropic.Anthropic | None = None
 
@@ -42,12 +43,29 @@ def _excluded_summary(excluded: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def _measure_note(em_code: str | None) -> str:
+    if em_code != "PROP":
+        return ""
+    return ("NOTA: metaanálisis de proporciones de un solo brazo (sin grupo control). El efecto es la "
+            "proporción de participantes con el desenlace (0–1), combinada en escala logit. No "
+            "interpretes una dirección a favor o en contra de la intervención ni la significación "
+            "frente a un valor nulo; interpreta la magnitud de la proporción y su precisión.\n\n")
+
+
+def _measure_desc(em_code: str | None) -> str:
+    if em_code == "PROP":
+        return ("proporción de un solo brazo: eventos/total del grupo de la intervención, combinada en "
+                "escala logit con el modelo de la revisión y retransformada; sin grupo comparador")
+    return em_code or ""
+
+
 def _meta_summary(meta_results: dict | None) -> str:
     if not meta_results:
         return ""
     p = meta_results.get("pooled", {})
     h = meta_results.get("heterogeneity", {})
     em = meta_results.get("effect_measure", "")
+    em_code, em = em, measure_label(em)
     model = meta_results.get("model", "random")
     k = meta_results.get("k", 0)
     n = meta_results.get("total_n", 0)
@@ -57,7 +75,7 @@ def _meta_summary(meta_results: dict | None) -> str:
     i2 = h.get("I2", "N/A")
     q_p = h.get("Q_pvalue", "N/A")
     tau2 = h.get("tau2", "N/A")
-    return (
+    return _measure_note(em_code) + (
         f"Meta-analysis results ({model}-effects model, k={k}, N={n}):\n"
         f"  Pooled {em}: {effect:.2f} [95% CI: {lo:.2f}, {hi:.2f}]\n"
         f"  Heterogeneity: I²={i2:.0f}%, Q p-value={q_p:.3f}, τ²={tau2:.3f}"
@@ -80,7 +98,7 @@ def _base_context(review: dict, studies: list[dict]) -> str:
         f"  Comparison: {comparison}\n"
         f"  Outcomes: {outcomes}\n\n"
         + (f"AUTHOR-DEFINED ELIGIBILITY CRITERIA (use verbatim, do not invent others):\n{criteria}\n\n" if criteria else "")
-        + f"EFFECT MEASURE: {effect_measure} | MODEL: {model_type}\n\n"
+        + f"EFFECT MEASURE: {_measure_desc(effect_measure)} | MODEL: {model_type}\n\n"
         f"INCLUDED STUDIES ({len(studies)} total):\n{_study_summary(studies)}"
     )
 
@@ -180,7 +198,7 @@ def generate_methods(review: dict, studies: list[dict]) -> str:
         "   - Selección de estudios\n"
         "   - Extracción de datos y gestión\n"
         "   - Evaluación del riesgo de sesgo (herramienta Cochrane RoB 2)\n"
-        f"   - Medidas del efecto del tratamiento ({effect_measure})\n"
+        f"   - Medidas del efecto del tratamiento ({_measure_desc(effect_measure)})\n"
         "   - Problemas de unidad de análisis\n"
         "   - Manejo de datos faltantes\n"
         f"   - Evaluación de heterogeneidad (Q de Cochran, I², modelo de efectos {model_type})\n"
@@ -376,6 +394,7 @@ def generate_plot_interpretation(
     p = meta_results.get("pooled", {})
     h = meta_results.get("heterogeneity", {})
     em = meta_results.get("effect_measure", "OR")
+    em_code, em = em, measure_label(em)
     model = meta_results.get("model", "random")
     k = meta_results.get("k", 0)
     n = meta_results.get("total_n", 0)
@@ -390,7 +409,7 @@ def generate_plot_interpretation(
     )
 
     user = (
-        f"REVIEW: {review.get('title', '')}\n"
+        _measure_note(em_code) + f"REVIEW: {review.get('title', '')}\n"
         f"Population: {review.get('population', '')} | "
         f"Intervention: {review.get('intervention', '')}\n\n"
         f"META-ANALYSIS RESULTS ({model}-effects model, k={k} studies, N={n} participants):\n"
@@ -642,6 +661,7 @@ _EXTRACT_FIELDS_BY_MEASURE = {
     "binary": ["events_intervention", "total_intervention", "events_control", "total_control"],
     "continuous": ["mean_intervention", "sd_intervention", "n_intervention",
                    "mean_control", "sd_control", "n_control"],
+    "proportion": ["events_intervention", "total_intervention"],
     "precalculated": ["effect_size", "effect_size_lower", "effect_size_upper",
                       "total_intervention", "total_control"],
 }
@@ -680,9 +700,10 @@ def _extract_schema(fields: list[str]) -> dict:
                     "properties": {
                         "id": {"type": "integer"},
                         "outcome_reported": {"type": "string"},
+                        "events_are_complement": {"type": "boolean"},
                         "values": {"type": "array", "items": item},
                     },
-                    "required": ["id", "outcome_reported", "values"],
+                    "required": ["id", "outcome_reported", "events_are_complement", "values"],
                     "additionalProperties": False,
                 },
             },
@@ -866,7 +887,8 @@ def extract_quantitative_data(review: dict, studies: list[dict]) -> dict:
 
     effect_measure = (review.get("effect_measure") or "OR").upper()
     kind = ("binary" if effect_measure in ("OR", "RR", "RD")
-            else "continuous" if effect_measure in ("MD", "SMD") else "precalculated")
+            else "continuous" if effect_measure in ("MD", "SMD")
+            else "proportion" if effect_measure == "PROP" else "precalculated")
     fields = _EXTRACT_FIELDS_BY_MEASURE[kind]
     outcome = (review.get("primary_outcomes") or review.get("outcomes") or "").strip()
 
@@ -905,15 +927,29 @@ def extract_quantitative_data(review: dict, studies: list[dict]) -> dict:
             "sea de un solo brazo, no tenga grupo control o no reporte el desenlace por grupo.\n"
             "- *_intervention = grupo de la intervención de la revisión; *_control = grupo comparador.\n"
             "- events_* = número de participantes con el evento; total_* = participantes analizados en ese grupo.\n"
-            "- effect_size/effect_size_lower/effect_size_upper = medida e IC95% tal como se reporta.\n\n"
+            "- effect_size/effect_size_lower/effect_size_upper = medida e IC95% tal como se reporta.\n"
+            + ("- MEDIDA PROP (un solo brazo): extrae solo el grupo que recibió la intervención de la "
+               "revisión; no hace falta grupo control. events_intervention = participantes con el "
+               "desenlace indicado; total_intervention = participantes de ese grupo. Si el estudio "
+               "mezcla poblaciones (p. ej. neonatos y niños mayores), usa solo el subgrupo de la "
+               "población de la revisión cuando sus números estén escritos.\n"
+               "- Si el texto da el número CONTRARIO al desenlace (p. ej. el desenlace es sobrevida y "
+               "el texto dice \"51 de 108 fallecieron\"), extrae ese número tal cual en "
+               "events_intervention y marca events_are_complement=true; la app calculará "
+               "total − ese número. En cualquier otro caso events_are_complement=false.\n"
+               if kind == "proportion" else "- events_are_complement siempre false.\n")
+            + "\n"
             "REGLAS ESTRICTAS:\n"
             "1. Cada valor debe estar escrito en los textos del estudio. En \"quote\" copia, carácter "
             "por carácter, la frase o fragmento (máx. ~300 caracteres) que contiene el número, y en "
             "\"source\" indica de qué texto lo copiaste.\n"
             "2. No calcules nada: si solo hay un porcentaje, no derives el número de eventos; si hay "
             "error estándar o rango, no lo conviertas en DE; si hay mediana, no la uses como media.\n"
-            "3. Extrae solo el desenlace indicado. Si el estudio no lo reporta para ambos grupos, "
-            "no devuelvas campos de grupo (pero sí sample_size si está escrito). Si hay varios "
+            "3. Extrae solo el desenlace indicado. "
+            + ("" if kind == "proportion" else
+               "Si el estudio no lo reporta para ambos grupos, no devuelvas campos de grupo (pero sí "
+               "sample_size si está escrito). ")
+            + "Si hay varios "
             "momentos de seguimiento, usa el principal declarado "
             "y escribe cuál en \"outcome_reported\".\n"
             "4. No asignes un grupo a intervención o control si el texto no permite saberlo.\n\n"
@@ -977,6 +1013,8 @@ def extract_quantitative_data(review: dict, studies: list[dict]) -> dict:
             # A group is only usable with all its numbers: drop incomplete arms.
             groups = ([("events_intervention", "total_intervention"), ("events_control", "total_control")]
                       if kind == "binary" else
+                      [("events_intervention", "total_intervention")]
+                      if kind == "proportion" else
                       [("mean_intervention", "sd_intervention", "n_intervention"),
                        ("mean_control", "sd_control", "n_control")]
                       if kind == "continuous" else
@@ -988,6 +1026,15 @@ def extract_quantitative_data(review: dict, studies: list[dict]) -> dict:
                         rejected.append({"field": f, "value": accepted.pop(f),
                                          "reason": "grupo incompleto (faltan datos verificables del mismo brazo)"})
                         evidence.pop(f, None)
+            if (kind == "proportion" and entry.get("events_are_complement")
+                    and "events_intervention" in accepted and "total_intervention" in accepted):
+                # Both numbers are verified quotes; the outcome count is their exact difference.
+                opposite = accepted["events_intervention"]
+                accepted["events_intervention"] = accepted["total_intervention"] - opposite
+                evidence["events_intervention"] = {
+                    **evidence["events_intervention"], "value": accepted["events_intervention"],
+                    "derived": f"total ({accepted['total_intervention']}) − {opposite} citado (desenlace contrario)",
+                }
             results[entry["id"]] = {"values": accepted, "evidence": evidence, "rejected": rejected,
                                     "outcome": entry["outcome_reported"]}
 
@@ -999,6 +1046,7 @@ def interpret_forest_plot(review: dict, result_dict: dict) -> str:
     p = result_dict.get("pooled", {})
     h = result_dict.get("heterogeneity", {})
     em = result_dict.get("effect_measure", "ES")
+    em_code, em = em, measure_label(em)
     model = result_dict.get("model", "random")
     k = result_dict.get("k", 0)
     total_n = result_dict.get("total_n", 0)
@@ -1016,7 +1064,7 @@ def interpret_forest_plot(review: dict, result_dict: dict) -> str:
         pi_text = f"\nIntervalo de predicción: [{pi['lower']:.2f}, {pi['upper']:.2f}]"
 
     user = (
-        f"REVISIÓN: {review.get('title', '')}\n"
+        _measure_note(em_code) + f"REVISIÓN: {review.get('title', '')}\n"
         f"Población: {review.get('population', '')} | Intervención: {review.get('intervention', '')}\n\n"
         f"RESULTADOS (modelo {model}, k={k}, N={total_n}):\n"
         f"  {em} combinado: {p.get('effect', 0):.2f} [IC95% {p.get('ci_lower', 0):.2f}–{p.get('ci_upper', 0):.2f}]\n"
@@ -1045,9 +1093,10 @@ def interpret_funnel_plot(review: dict, result_dict: dict) -> str:
     p = result_dict.get("pooled", {})
     h = result_dict.get("heterogeneity", {})
     em = result_dict.get("effect_measure", "ES")
+    em_code, em = em, measure_label(em)
     k = result_dict.get("k", 0)
     user = (
-        f"REVISIÓN: {review.get('title', '')}\n"
+        _measure_note(em_code) + f"REVISIÓN: {review.get('title', '')}\n"
         f"k={k} estudios, {em} combinado={p.get('effect', 0):.2f} "
         f"[{p.get('ci_lower', 0):.2f}–{p.get('ci_upper', 0):.2f}], "
         f"I²={h.get('I2', 0):.0f}%\n\n"
@@ -1071,6 +1120,7 @@ def interpret_grade_table(review: dict, result_dict: dict, studies: list) -> str
     p = result_dict.get("pooled", {})
     h = result_dict.get("heterogeneity", {})
     em = result_dict.get("effect_measure", "ES")
+    em_code, em = em, measure_label(em)
     k = result_dict.get("k", 0)
     total_n = result_dict.get("total_n", 0)
     i2 = h.get("I2", 0)
@@ -1090,7 +1140,7 @@ def interpret_grade_table(review: dict, result_dict: dict, studies: list) -> str
     )
 
     user = (
-        f"REVISIÓN: {review.get('title', '')}\n"
+        _measure_note(em_code) + f"REVISIÓN: {review.get('title', '')}\n"
         f"k={k} estudios, N={total_n}, {effect_str}, I²={i2:.0f}%, "
         f"dominios con alto riesgo de sesgo: {high_risk}\n\n"
         "Escribe en ESPAÑOL una interpretación de la tabla GRADE de certeza de la evidencia (200–250 palabras): "

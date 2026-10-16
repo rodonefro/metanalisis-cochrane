@@ -327,6 +327,7 @@ export default function ReviewEditor() {
               <option value="RD">RD – Diferencia de Riesgos</option>
               <option value="MD">MD – Diferencia de Medias</option>
               <option value="SMD">SMD – DM Estandarizada</option>
+              <option value="PROP">PROP – Proporción (un solo brazo)</option>
               <option value="PRECALCULATED">Precalculado</option>
             </select>
           </div>

@@ -1,7 +1,8 @@
 """
 Meta-analysis statistical engine.
 Implements fixed-effects (inverse variance) and random-effects (DerSimonian-Laird)
-models for binary (OR, RR, RD) and continuous (MD, SMD/Hedges' g) outcomes.
+models for binary (OR, RR, RD) and continuous (MD, SMD/Hedges' g) outcomes, and
+single-arm proportions (PROP, pooled on the logit scale).
 """
 import math
 from typing import List, Optional
@@ -50,6 +51,18 @@ class MetaResult:
     excluded_studies: List[tuple] = field(default_factory=list)
 
 
+# Measures pooled on a transformed scale; results are reported back-transformed.
+LOG_MEASURES = ("OR", "RR")
+TRANSFORMED_MEASURES = LOG_MEASURES + ("PROP",)
+
+MEASURE_LABELS = {"PROP": "Proporción", "PRECALCULATED": "TE"}
+
+
+def measure_label(em: str | None) -> str:
+    """Display name of an effect measure (internal codes are not reader-friendly)."""
+    return MEASURE_LABELS.get(em or "", em or "")
+
+
 # ── Effect size calculators ────────────────────────────────────────────────────
 
 def _safe_log(x: float) -> float:
@@ -82,6 +95,13 @@ def compute_rd(a: int, n1: int, c: int, n2: int):
     rd = p1 - p2
     var = p1 * (1 - p1) / n1 + p2 * (1 - p2) / n2
     return rd, var
+
+
+def compute_logit_prop(x: int, n: int):
+    """logit(x/n) and its variance; 0.5 continuity correction for 0 or n events."""
+    if x == 0 or x == n:
+        x, n = x + 0.5, n + 1
+    return math.log(x / (n - x)), 1 / x + 1 / (n - x)
 
 
 def compute_md(mean1: float, sd1: float, n1: int,
@@ -165,6 +185,20 @@ def run_meta_analysis(study_data: list, effect_measure: str,
                     eff, var = compute_log_rr(a, n1, c, n2)
                 else:
                     eff, var = compute_rd(a, n1, c, n2)
+
+            elif effect_measure == "PROP":
+                # Single-arm: events and total of the review's intervention group.
+                x = s.get("events_intervention")
+                n = s.get("total_intervention")
+                if x is None or not n:
+                    excluded_studies.append((label, "Faltan eventos y total del grupo (un solo brazo)"))
+                    continue
+                x, n = int(x), int(n)
+                if not 0 <= x <= n:
+                    excluded_studies.append((label, "Eventos mayores que el total del grupo"))
+                    continue
+                total_n += n
+                eff, var = compute_logit_prop(x, n)
 
             elif effect_measure in ("MD", "SMD"):
                 m1 = s.get("mean_intervention"); sd1 = s.get("sd_intervention")
@@ -287,10 +321,21 @@ def run_meta_analysis(study_data: list, effect_measure: str,
 
 
 def back_transform(value: float, effect_measure: str) -> float:
-    """Convert log-scale back to original scale for OR/RR."""
-    if effect_measure in ("OR", "RR"):
+    """Convert the pooling scale back to the reported scale (log for OR/RR, logit for PROP)."""
+    if effect_measure in LOG_MEASURES:
         return math.exp(value)
+    if effect_measure == "PROP":
+        return 1 / (1 + math.exp(-value))
     return value
+
+
+def to_pooling_scale(value: float, effect_measure: str) -> float:
+    if effect_measure in LOG_MEASURES:
+        return math.log(max(float(value), 1e-10))
+    if effect_measure == "PROP":
+        p = min(max(float(value), 1e-6), 1 - 1e-6)
+        return math.log(p / (1 - p))
+    return float(value)
 
 
 def meta_result_from_dict(d: dict) -> MetaResult:
@@ -301,11 +346,11 @@ def meta_result_from_dict(d: dict) -> MetaResult:
     """
     em = d.get("effect_measure", "OR")
     model = d.get("model", "random")
-    is_log = em in ("OR", "RR")
+    is_log = em in LOG_MEASURES
     z = 1.96
 
     def _inv(v: float) -> float:
-        return math.log(max(float(v), 1e-10)) if is_log else float(v)
+        return to_pooling_scale(v, em)
 
     study_effects: List[StudyEffect] = []
     for s in d.get("studies", []):
@@ -328,7 +373,7 @@ def meta_result_from_dict(d: dict) -> MetaResult:
     p = d.get("pooled", {})
     h = d.get("heterogeneity", {})
     pi = d.get("prediction_interval", {}) or {}
-    default_neutral = 1.0 if is_log else 0.0
+    default_neutral = 1.0 if is_log else 0.5 if em == "PROP" else 0.0
 
     return MetaResult(
         studies=study_effects,
@@ -357,7 +402,6 @@ def meta_result_from_dict(d: dict) -> MetaResult:
 def result_to_dict(result: MetaResult) -> dict:
     """Serialize MetaResult to JSON-compatible dict (back-transformed)."""
     bt = lambda v: back_transform(v, result.effect_measure)
-    is_log = result.effect_measure in ("OR", "RR")
 
     studies_out = []
     for s in result.studies:

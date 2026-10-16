@@ -157,16 +157,15 @@ def _fresh_plots(review: Review, analysis: Analysis | None, studies: list) -> di
         "funnel": analysis.funnel_plot_b64 if analysis else None,
         "rob": analysis.rob_plot_b64 if analysis else None,
     }
-    if not analysis or not analysis.results_json:
-        return plots
     study_dicts = [{c.name: getattr(s, c.name) for c in s.__table__.columns} for s in studies]
-    try:
-        result = meta_result_from_dict(json.loads(analysis.results_json))
-        plots["forest"] = generate_forest_plot(result, title=review.title or "") or plots["forest"]
-        plots["funnel"] = generate_funnel_plot(result, title="Funnel Plot") or plots["funnel"]
-    except Exception:
-        pass
-    if plots["rob"] and study_dicts:
+    if analysis and analysis.results_json:
+        try:
+            result = meta_result_from_dict(json.loads(analysis.results_json))
+            plots["forest"] = generate_forest_plot(result, title=review.title or "") or plots["forest"]
+            plots["funnel"] = generate_funnel_plot(result, title="Funnel Plot") or plots["funnel"]
+        except Exception:
+            pass
+    if any(s.get("rob_overall") for s in study_dicts):
         try:
             plots["rob"] = generate_rob_traffic_light(study_dicts) or plots["rob"]
         except Exception:
@@ -699,7 +698,7 @@ def export_pdf(review_id: int, db: Session = Depends(get_db)):
 
             stat_rows = [
                 ["Parameter", "Value"],
-                ["Effect measure", em],
+                ["Effect measure", "Proportion (single arm, logit, back-transformed)" if em == "PROP" else em],
                 ["Studies (k)", str(res.get("k", "—"))],
                 ["Participants (N)", str(res.get("total_n", "—"))],
                 ["Pooled effect (95% CI)",
@@ -1146,7 +1145,7 @@ def export_docx(review_id: int, db: Session = Depends(get_db)):
             stat_tbl = d.add_table(rows=10, cols=2)
             stat_tbl.style = "Table Grid"
             rows_data = [
-                ("Medida de efecto", em),
+                ("Medida de efecto", "Proporción de un solo brazo (logit, retransformada)" if em == "PROP" else em),
                 ("Estudios (k)",      str(res.get("k", "—"))),
                 ("Participantes (N)", str(res.get("total_n", "—"))),
                 ("Efecto combinado (IC 95%)",
