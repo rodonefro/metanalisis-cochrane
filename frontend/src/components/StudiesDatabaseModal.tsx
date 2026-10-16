@@ -128,12 +128,15 @@ export default function StudiesDatabaseModal({ reviewId, studies, onClose }: Pro
   return (
     <div className="fixed inset-0 z-50 flex flex-col bg-white">
       {/* ── Header ── */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-white shadow-sm flex-shrink-0">
-        <div>
-          <h2 className="text-lg font-bold text-gray-900">Base de datos de estudios (Studies Database)</h2>
+      <div className="flex flex-wrap items-center gap-2 px-4 sm:px-6 pb-3 sm:pb-4 pt-[max(0.75rem,env(safe-area-inset-top))] sm:pt-4 border-b border-gray-200 bg-white shadow-sm flex-shrink-0">
+        <div className="min-w-0 flex-1">
+          <h2 className="text-base sm:text-lg font-bold text-gray-900">Base de datos de estudios (Studies Database)</h2>
           <p className="text-xs text-gray-400 mt-0.5">{filtered.length} de {studies.length} estudios</p>
         </div>
-        <div className="flex items-center gap-2">
+        <button type="button" onClick={onClose} aria-label="Cerrar" className="p-2 rounded-lg hover:bg-gray-100 text-gray-500 sm:order-last">
+          <X size={20} />
+        </button>
+        <div className="flex items-center gap-2 basis-full sm:basis-auto">
           <a
             href={`${API_BASE}/static/plantilla_estudios.xlsx`}
             download="PLANTILLA_ESTUDIOS.xlsx"
@@ -143,9 +146,6 @@ export default function StudiesDatabaseModal({ reviewId, studies, onClose }: Pro
           </a>
           <button type="button" onClick={() => exportCsv(filtered)} className="btn-secondary text-xs">
             <Download size={13} /> Exportar CSV
-          </button>
-          <button type="button" onClick={onClose} className="p-2 rounded-lg hover:bg-gray-100 text-gray-500">
-            <X size={20} />
           </button>
         </div>
       </div>
@@ -390,7 +390,7 @@ export default function StudiesDatabaseModal({ reviewId, studies, onClose }: Pro
                       <button
                         type="button"
                         onClick={() => handleDelete(ext)}
-                        className="opacity-0 group-hover:opacity-100 text-gray-300 hover:text-red-500 transition-all"
+                        className="hover-reveal text-gray-300 hover:text-red-500 transition-all"
                       >
                         <Trash2 size={13} />
                       </button>
@@ -404,9 +404,9 @@ export default function StudiesDatabaseModal({ reviewId, studies, onClose }: Pro
       </div>
 
       {/* ── Footer ── */}
-      <div className="px-6 py-3 border-t border-gray-100 bg-gray-50 flex-shrink-0 flex items-center justify-between">
+      <div className="px-4 sm:px-6 pt-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] border-t border-gray-100 bg-gray-50 flex-shrink-0 flex items-center justify-between gap-3">
         <p className="text-xs text-gray-400">
-          {filtered.length} estudio(s) · Pasa el cursor sobre una fila para eliminar
+          {filtered.length} estudio(s) · Usa el ícono de papelera de cada fila para eliminar
         </p>
         <button type="button" onClick={onClose} className="btn-secondary text-xs">
           Cerrar (Close)

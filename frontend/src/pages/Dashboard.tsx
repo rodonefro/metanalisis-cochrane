@@ -51,12 +51,12 @@ export default function Dashboard() {
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto">
+    <div className="p-4 sm:p-6 max-w-5xl mx-auto">
 
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">Mis Meta-análisis</h2>
+          <h2 className="text-xl sm:text-2xl font-bold text-gray-900">Mis Meta-análisis</h2>
           <p className="text-gray-400 text-sm mt-0.5">
             {reviews.length} revisión{reviews.length !== 1 ? 'es' : ''} guardada{reviews.length !== 1 ? 's' : ''}
           </p>
@@ -71,7 +71,7 @@ export default function Dashboard() {
 
       {/* Summary stats */}
       {reviews.length > 0 && (
-        <div className="grid grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-3 gap-2 sm:gap-4 mb-6">
           {[
             { label: 'Completados', count: byStatus.completed, color: 'bg-green-50 border-green-200 text-green-700' },
             { label: 'En progreso', count: byStatus.in_progress, color: 'bg-blue-50 border-blue-200 text-blue-700' },
@@ -103,7 +103,7 @@ export default function Dashboard() {
             return (
               <div
                 key={r.id}
-                className="card p-5 flex items-center gap-4 hover:border-cochrane-400 hover:shadow-md transition-all cursor-pointer group"
+                className="card p-4 sm:p-5 flex flex-wrap sm:flex-nowrap items-center gap-3 sm:gap-4 hover:border-cochrane-400 hover:shadow-md transition-all cursor-pointer group"
                 onClick={() => navigate(`/reviews/${r.id}`)}
               >
                 {/* Icon */}
@@ -112,8 +112,8 @@ export default function Dashboard() {
                 </div>
 
                 {/* Main info */}
-                <div className="flex-1 min-w-0">
-                  <p className="font-semibold text-gray-900 truncate leading-snug">{r.title}</p>
+                <div className="flex-1 min-w-0 basis-[calc(100%-3.5rem)] sm:basis-auto">
+                  <p className="font-semibold text-gray-900 line-clamp-2 sm:truncate leading-snug">{r.title}</p>
                   <div className="flex flex-wrap items-center gap-2 mt-1.5">
                     {r.prospero_id && (
                       <StatPill label="PROSPERO" value={r.prospero_id} />
@@ -136,7 +136,7 @@ export default function Dashboard() {
 
                 {/* Actions */}
                 <div
-                  className="flex items-center gap-1 shrink-0"
+                  className="flex flex-wrap items-center gap-1 sm:shrink-0 ml-auto"
                   onClick={(e) => e.stopPropagation()}
                 >
                   <button

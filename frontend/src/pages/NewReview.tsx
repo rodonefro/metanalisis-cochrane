@@ -78,7 +78,7 @@ export default function NewReview() {
   const canSubmit = form.title.trim().length > 0
 
   return (
-    <div className="p-8 max-w-2xl mx-auto">
+    <div className="p-4 sm:p-8 max-w-2xl mx-auto">
       <button
         onClick={() => navigate('/dashboard')}
         className="flex items-center gap-2 text-sm text-gray-500 hover:text-gray-700 mb-6"
@@ -139,7 +139,7 @@ export default function NewReview() {
                 placeholder="Ej: Efecto de X intervención sobre Y desenlace en Z población"
               />
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="label">ID PROSPERO</label>
                 <input className="input" value={form.prospero_id} onChange={set('prospero_id')} placeholder="CRD42024..." />
@@ -149,7 +149,7 @@ export default function NewReview() {
                 <input className="input" value={form.study_design} onChange={set('study_design')} placeholder="ECA, CCT..." />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
                 <label className="label">Medida del efecto</label>
                 <select className="input" value={form.effect_measure} onChange={set('effect_measure')}>
@@ -220,7 +220,7 @@ export default function NewReview() {
               <p className="text-xs text-gray-400 mb-2">
                 Selecciona todos los diseños que la IA debe aceptar. Si no marcas ninguno, se aceptará cualquier diseño relevante a tu PICO.
               </p>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {STUDY_TYPES.map((type) => {
                   const checked = selectedTypes.includes(type)
                   return (
@@ -281,7 +281,7 @@ export default function NewReview() {
                 Opcional. Define qué diseños se podrán aislar en un análisis de subgrupos o sensibilidad,
                 independiente de los tipos de estudio principales de la revisión.
               </p>
-              <div className="grid grid-cols-2 gap-2">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                 {STUDY_TYPES.map((type) => {
                   const checked = selectedSubgroupTypes.includes(type)
                   return (

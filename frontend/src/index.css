@@ -3,8 +3,17 @@
 @tailwind utilities;
 
 @layer base {
+  html {
+    -webkit-text-size-adjust: 100%;
+  }
   body {
     @apply bg-gray-50 text-gray-900 antialiased;
+  }
+  /* iOS Safari zooms into any field with text smaller than 16px. */
+  @media (max-width: 767px) {
+    input, select, textarea {
+      font-size: 16px !important;
+    }
   }
 }
 
@@ -23,6 +32,15 @@
   }
   .input {
     @apply w-full px-3 py-2 text-sm border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-cochrane-500 focus:border-transparent;
+  }
+  /* Shown on hover with a mouse; always visible on touch screens, which have no hover. */
+  @media (hover: hover) {
+    .hover-reveal {
+      opacity: 0;
+    }
+    .group:hover .hover-reveal {
+      opacity: 1;
+    }
   }
   .label {
     @apply block text-xs font-semibold text-gray-600 mb-1 uppercase tracking-wide;

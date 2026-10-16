@@ -226,24 +226,24 @@ export default function ReviewEditor() {
   )
 
   return (
-    <div className="p-6 max-w-4xl mx-auto">
+    <div className="p-4 sm:p-6 max-w-4xl mx-auto">
       {/* Header */}
-      <div className="flex items-start justify-between mb-6">
-        <div>
+      <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 mb-6">
+        <div className="min-w-0">
           <button
             onClick={() => navigate('/dashboard')}
             className="flex items-center gap-1 text-sm text-gray-400 hover:text-gray-700 mb-2"
           >
             <ArrowLeft size={15} /> Inicio (Dashboard)
           </button>
-          <h2 className="text-xl font-bold text-gray-900 leading-tight">{review.title}</h2>
-          <div className="flex items-center gap-3 mt-1 text-xs text-gray-400">
+          <h2 className="text-lg sm:text-xl font-bold text-gray-900 leading-tight break-words">{review.title}</h2>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 mt-1 text-xs text-gray-400">
             {review.prospero_id && <span>PROSPERO: {review.prospero_id}</span>}
             <span>{review.studies?.length || 0} estudios</span>
             <span className="capitalize">{review.status}</span>
           </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           {/* Save indicator */}
           {updateMutation.isPending ? (
             <span className="flex items-center gap-1.5 text-xs text-gray-400">
@@ -299,7 +299,7 @@ export default function ReviewEditor() {
         <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
           PICO y Configuración
         </h3>
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {[
             { field: 'population',   label: 'Población (P)' },
             { field: 'intervention', label: 'Intervención (I)' },
@@ -346,7 +346,7 @@ export default function ReviewEditor() {
         {/* Tipos de estudio a incluir */}
         <div className="mt-3">
           <label className="label">Tipos de estudio a incluir</label>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {STUDY_TYPES.map((type) => {
               const checked = selectedTypes.includes(type)
               return (
@@ -369,7 +369,7 @@ export default function ReviewEditor() {
         </div>
 
         {/* Criterios de selección */}
-        <div className="mt-3 grid grid-cols-2 gap-3">
+        <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
             <label className="label text-green-700">Criterios de Inclusión</label>
             <textarea
@@ -399,7 +399,7 @@ export default function ReviewEditor() {
             Opcional. Diseños que se podrán aislar en un análisis de subgrupos o sensibilidad,
             independiente de los tipos de estudio principales de la revisión.
           </p>
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {STUDY_TYPES.map((type) => {
               const checked = selectedSubgroupTypes.includes(type)
               return (

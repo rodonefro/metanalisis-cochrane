@@ -232,7 +232,7 @@ export default function ReferenceManager({ reviewId, studies }: Props) {
                     <option value="other">Otros métodos (citas, webs, expertos)</option>
                   </select>
                 </div>
-                <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
                   <div>
                     <label className="label">Fecha de búsqueda</label>
                     <input
@@ -420,7 +420,7 @@ function ScreeningModal({
   ]
 
   return (
-    <div className="fixed inset-0 z-50 bg-black/40 flex items-stretch justify-center p-2 sm:p-4">
+    <div className="fixed inset-0 z-50 bg-black/40 flex items-stretch justify-center p-2 sm:p-4 pt-[max(0.5rem,env(safe-area-inset-top))] pb-[max(0.5rem,env(safe-area-inset-bottom))]">
       <div className="bg-white rounded-xl shadow-xl w-full max-w-7xl flex flex-col overflow-hidden">
         {/* Header */}
         <div className="flex items-center gap-3 px-4 py-3 border-b border-gray-200 flex-wrap">

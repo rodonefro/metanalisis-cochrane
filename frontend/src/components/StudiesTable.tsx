@@ -201,11 +201,11 @@ export default function StudiesTable({ reviewId, studies }: Props) {
             e.target.value = ''
           }}
         />
-        <div className="flex items-center gap-3 px-5 py-4 hover:bg-gray-50">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3 px-4 sm:px-5 py-4 hover:bg-gray-50">
           <button
             type="button"
             onClick={() => setOpen((o) => !o)}
-            className="flex-1 flex items-center gap-2 text-left"
+            className="flex-1 basis-full sm:basis-auto min-w-0 flex flex-wrap items-center gap-2 text-left"
           >
             <span className="font-semibold text-gray-800">Estudios (Studies)</span>
             <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded-full">
