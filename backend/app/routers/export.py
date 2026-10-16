@@ -23,7 +23,7 @@ from ..services.plots import (
     generate_prisma_2020, generate_grade_table, generate_forest_plot,
     generate_funnel_plot, generate_rob_traffic_light, _short_label,
 )
-from ..services.eligibility import eligible_studies, excluded_studies
+from ..services.eligibility import eligible_studies
 from ..services.prospero import PROSPERO_FIELDS, load_answers
 from ..services.statistics import meta_result_from_dict
 from ..services.prisma import sync_prisma, prisma_plot_kwargs
@@ -333,13 +333,12 @@ def _characteristics_table(studies: list, st: dict) -> list:
     ]
 
 
-def _excluded_table(studies: list, st: dict) -> list:
-    """'Characteristics of excluded studies': study and reason for exclusion."""
+def _excluded_table(items: list, st: dict) -> list:
+    """'Characteristics of excluded studies': full-text exclusions and their reason."""
     cell = ParagraphStyle("exCell", fontSize=7.8, leading=9.6)
     head = ParagraphStyle("exHead", parent=cell, fontName="Helvetica-Bold")
     rows = [[Paragraph("Estudio", head), Paragraph("Motivo de exclusión", head)]]
-    for s in studies:
-        reason = s.exclusion_reason or "Motivo no registrado"
+    for s, reason in items:
         rows.append([Paragraph(_safe(_study_name(s)), head), Paragraph(_safe(_trunc(reason, 300)), cell)])
     return [
         _para("Table 2. Characteristics of excluded studies", st["label"]),
@@ -348,17 +347,52 @@ def _excluded_table(studies: list, st: dict) -> list:
     ]
 
 
-def _exclusion_summary(studies: list) -> str:
+def _excluded_by_stage(db: Session, review_id: int) -> tuple[list, list]:
+    """(excluded after full-text assessment, excluded at title/abstract), as in the PRISMA diagram.
+
+    Cochrane reports list only the full-text exclusions study by study; screening
+    exclusions are reported as counts.
+    """
+    from ..services.prisma import classify
+    from ..services.references import effective_decision
+    full_text, screening = [], []
+    for s in db.query(Study).filter(Study.review_id == review_id).order_by(Study.id).all():
+        box = classify(s)
+        if box == "not_retrieved":
+            full_text.append((s, "Texto completo no recuperado"))
+        elif box == "excluded_eligibility":
+            full_text.append((s, "Sin decisión final tras el texto completo (pendiente de los autores)"
+                              if effective_decision(s) == "maybe"
+                              else s.exclusion_reason or "Motivo no registrado"))
+        elif box == "excluded_screening":
+            screening.append((s, s.exclusion_reason or "Motivo no registrado"))
+    return full_text, screening
+
+
+def _top_reasons(items: list, top: int = 8) -> str:
     from collections import Counter
-    if not studies:
-        return "No se excluyeron estudios tras el cribado."
-    reasons = Counter(
-        (s.exclusion_reason or "Motivo no registrado").split(":", 1)[0].split("—", 1)[0].strip()[:90]
-        for s in studies
-    )
-    parts = "; ".join(f"{r} (n = {n})" for r, n in reasons.most_common())
-    return (f"Se excluyeron {len(studies)} estudios tras aplicar los criterios de elegibilidad. "
-            f"Motivos: {parts}. El detalle de cada estudio se presenta en la Tabla 2.")
+    reasons = Counter(r.split(":", 1)[0].split("—", 1)[0].strip()[:90] for _, r in items)
+    parts = [f"{r} (n = {n})" for r, n in reasons.most_common(top)]
+    rest = sum(n for _, n in reasons.most_common()[top:])
+    if rest:
+        parts.append(f"otros motivos (n = {rest})")
+    return "; ".join(parts)
+
+
+def _exclusion_summary(full_text: list, screening: list) -> str:
+    text = []
+    if screening:
+        text.append(
+            f"En el cribado de título y resumen se excluyeron {len(screening)} registros; motivos más "
+            f"frecuentes: {_top_reasons(screening, 5)}. Estos registros se contabilizan en el diagrama "
+            "PRISMA y se listan en el archivo «Estudios excluidos» (Excel) de la revisión.")
+    if full_text:
+        text.append(
+            f"Tras evaluar el texto completo se excluyeron {len(full_text)} estudios. Motivos: "
+            f"{_top_reasons(full_text)}. Sus características se presentan en la Tabla 2.")
+    else:
+        text.append("Ningún estudio se excluyó tras la evaluación del texto completo.")
+    return " ".join(text)
 
 
 # ── Cover page ───────────────────────────────────────────────────────────────
@@ -496,7 +530,7 @@ def export_pdf(review_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Review not found")
 
     studies = eligible_studies(db, review_id)
-    excluded = excluded_studies(db, review_id)
+    excluded_ft, excluded_screen = _excluded_by_stage(db, review_id)
     analysis = (
         db.query(Analysis)
         .filter(Analysis.review_id == review_id)
@@ -655,9 +689,9 @@ def export_pdf(review_id: int, db: Session = Depends(get_db)):
                   *_characteristics_table(studies, st),
                   NextPageTemplate("portrait"), PageBreak()]
 
-    _sub(story, "4.1.3", "Excluded studies", _exclusion_summary(excluded), st, level=3)
-    if excluded:
-        story += _excluded_table(excluded, st)
+    _sub(story, "4.1.3", "Excluded studies", _exclusion_summary(excluded_ft, excluded_screen), st, level=3)
+    if excluded_ft:
+        story += _excluded_table(excluded_ft, st)
         story.append(Spacer(1, 0.3 * cm))
 
     _sub(story, "4.1.4", "Risk of bias in included studies",
@@ -976,10 +1010,10 @@ def _docx_study_table(doc_obj, studies: list):
     _docx_set_orientation(doc_obj, False)
 
 
-def _docx_excluded_table(doc_obj, studies: list):
+def _docx_excluded_table(doc_obj, items: list):
     _docx_add_body(doc_obj, "**Tabla 2. Características de los estudios excluidos**", size_pt=10)
     rows = [["Estudio", "Motivo de exclusión"]]
-    rows += [[_study_name(s), _trunc(s.exclusion_reason or "Motivo no registrado", 300)] for s in studies]
+    rows += [[_study_name(s), _trunc(reason, 300)] for s, reason in items]
     _docx_rule_table(doc_obj, rows, [4.6, 12.0], 8)
 
 
@@ -1119,11 +1153,11 @@ def export_docx(review_id: int, db: Session = Depends(get_db)):
     else:
         _docx_add_body(d, "[Sin estudios incluidos]")
 
-    excluded = excluded_studies(db, review_id)
+    excluded_ft, excluded_screen = _excluded_by_stage(db, review_id)
     _docx_add_heading(d, "Estudios excluidos", 3)
-    _docx_add_body(d, _exclusion_summary(excluded))
-    if excluded:
-        _docx_excluded_table(d, excluded)
+    _docx_add_body(d, _exclusion_summary(excluded_ft, excluded_screen))
+    if excluded_ft:
+        _docx_excluded_table(d, excluded_ft)
 
     _docx_add_heading(d, "4.1.3  Riesgo de sesgo en los estudios incluidos", 3)
     _docx_add_body(d, review.risk_of_bias_results or "[Pendiente de generar]")
