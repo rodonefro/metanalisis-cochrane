@@ -10,6 +10,7 @@ import AnalysisPanel from '../components/AnalysisPanel'
 import PrismaPanel from '../components/PrismaPanel'
 import ReferencesSection from '../components/ReferencesSection'
 import ProsperoPanel from '../components/ProsperoPanel'
+import MetaTypeToggle, { withObservationalTypes } from '../components/MetaTypeToggle'
 import ReferenceManager from '../components/ReferenceManager'
 
 const SECTIONS = [
@@ -103,6 +104,20 @@ export default function ReviewEditor() {
     autoSaveTimer.current = setTimeout(() => {
       updateMutation.mutate({ ...pico, [field]: value } as Partial<Review>)
     }, 2000)
+  }
+
+  const handleMetaType = (kind: 'comparative' | 'proportion') => {
+    const isProp = pico.effect_measure === 'PROP'
+    if ((kind === 'proportion') === isProp) return
+    const patch: Partial<Review> = kind === 'proportion'
+      ? { effect_measure: 'PROP', types_of_studies: withObservationalTypes(pico.types_of_studies) }
+      : { effect_measure: 'OR' }
+    if (autoSaveTimer.current) clearTimeout(autoSaveTimer.current)
+    setPico((p) => ({ ...p, ...patch }))
+    updateMutation.mutate({ ...pico, ...patch })
+    toast.success(kind === 'proportion'
+      ? 'Metaanálisis de proporciones (un solo brazo): se agregaron los diseños observacionales a los tipos de estudio.'
+      : 'Metaanálisis comparativo (OR). Puedes cambiar la medida del efecto abajo.')
   }
 
   const selectedTypes = pico.types_of_studies ? pico.types_of_studies.split(', ').filter(Boolean) : []
@@ -299,6 +314,9 @@ export default function ReviewEditor() {
         <h3 className="text-sm font-semibold text-gray-700 uppercase tracking-wide mb-3">
           PICO y Configuración
         </h3>
+        <div className="mb-4">
+          <MetaTypeToggle effectMeasure={pico.effect_measure} onSelect={handleMetaType} />
+        </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           {[
             { field: 'population',   label: 'Población (P)' },
@@ -431,7 +449,11 @@ export default function ReviewEditor() {
 
       {/* Studies */}
       <div id="estudios" className="mb-4 scroll-mt-4">
-        <StudiesTable reviewId={reviewId} studies={review.studies || []} />
+        <StudiesTable
+          reviewId={reviewId}
+          studies={review.studies || []}
+          showCenters={review.effect_measure === 'PROP'}
+        />
       </div>
 
       {/* Analysis */}

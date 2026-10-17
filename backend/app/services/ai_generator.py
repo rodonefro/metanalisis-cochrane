@@ -79,7 +79,32 @@ def _meta_summary(meta_results: dict | None) -> str:
         f"Meta-analysis results ({model}-effects model, k={k}, N={n}):\n"
         f"  Pooled {em}: {effect:.2f} [95% CI: {lo:.2f}, {hi:.2f}]\n"
         f"  Heterogeneity: I²={i2:.0f}%, Q p-value={q_p:.3f}, τ²={tau2:.3f}"
-    )
+    ) + _sensitivity_summary(meta_results)
+
+
+def _sensitivity_summary(meta_results: dict) -> str:
+    counts = meta_results.get("center_counts")
+    sens = meta_results.get("sensitivity_multicenter")
+    if not counts and not sens:
+        return ""
+    lines = []
+    if counts:
+        lines.append(
+            f"\nStudy settings among pooled studies: single-centre={counts.get('single', 0)}, "
+            f"multicentre={counts.get('multi', 0)}, unclear/unclassified="
+            f"{counts.get('unclear', 0) + counts.get('unclassified', 0)}"
+        )
+    if sens and sens.get("available"):
+        sp, sh = sens.get("pooled", {}), sens.get("heterogeneity", {})
+        lines.append(
+            f"Sensitivity analysis restricted to multicentre studies (k={sens.get('k')}, "
+            f"N={sens.get('total_n')}): pooled {measure_label(sens.get('effect_measure'))} "
+            f"{sp.get('effect', 0):.2f} [95% CI: {sp.get('ci_lower', 0):.2f}, {sp.get('ci_upper', 0):.2f}], "
+            f"I²={sh.get('I2', 0):.0f}%. Compare it with the main estimate when interpreting robustness."
+        )
+    elif sens:
+        lines.append(f"Sensitivity analysis restricted to multicentre studies not performed: {sens.get('reason')}")
+    return "\n".join(lines)
 
 
 def _base_context(review: dict, studies: list[dict]) -> str:
@@ -600,7 +625,12 @@ def screen_studies_with_ai(review: dict, studies: list[dict]) -> dict:
             "grupo, o un efecto comparativo (OR, RR, diferencia) con su IC 95 %. NO son cuantitativos: "
             "un valor p, una prevalencia global del estudio, porcentajes sin el tamaño de cada grupo o "
             "frases como «fue más frecuente en…»; en esos casos indica \"narrative\" y explica en la "
-            "nota qué datos habría que obtener del texto completo. Para \"exclude\" "
+            "nota qué datos habría que obtener del texto completo."
+            + (" EXCEPCIÓN — esta revisión es un metaanálisis de PROPORCIONES de un solo brazo: aquí "
+               "\"quantitative\" significa que el texto escribe el número de participantes con el "
+               "desenlace y el total de la cohorte de interés (o un porcentaje junto con ese total); "
+               "no se requiere grupo comparador."
+               if (review.get("effect_measure") or "").upper() == "PROP" else "") + " Para \"exclude\" "
             "e \"uncertain\" usa \"not_applicable\". En \"suitability_note\" indica en español qué "
             "datos cuantitativos aporta y para qué desenlace, o qué falta. La analizabilidad NUNCA "
             "cambia la decisión: un estudio elegible sin datos numéricos se incluye igualmente.\n\n"
@@ -868,6 +898,79 @@ def assess_risk_of_bias(review: dict, studies: list[dict]) -> dict:
                 "rob_notes": f"{ROB_AI_TAG}\nDiseño: {a['design'].strip()}\n{a['justification'].strip()}",
             }
 
+    return results
+
+
+_CENTER_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "studies": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer"},
+                    "center_type": {"type": "string", "enum": ["single", "multi", "unclear"]},
+                    "evidence": {"type": "string"},
+                },
+                "required": ["id", "center_type", "evidence"],
+                "additionalProperties": False,
+            },
+        },
+    },
+    "required": ["studies"],
+    "additionalProperties": False,
+}
+
+
+def classify_center_type(studies: list[dict]) -> dict:
+    """Single-centre vs multicentre for each study, from its stored text only.
+    Returns {study_id: {"center_type": "single"|"multi"|"unclear", "evidence": str}}."""
+    import json
+
+    client = _get_client()
+    results: dict = {}
+    for i in range(0, len(studies), 15):
+        batch = studies[i:i + 15]
+        payload = []
+        for s in batch:
+            entry = {"id": s["id"]}
+            for field in _SCREEN_STUDY_FIELDS:
+                value = s.get(field)
+                if value not in (None, ""):
+                    entry[field] = value
+            payload.append(entry)
+        user = (
+            "Clasifica cada estudio según el número de centros donde se reclutaron los participantes:\n"
+            "- \"single\" (unicéntrico): un solo hospital, unidad o centro (p. ej., «single-centre», "
+            "«at Kenyatta National Hospital», «in our NICU»).\n"
+            "- \"multi\" (multicéntrico): dos o más hospitales o centros, redes, registros o bases de "
+            "datos multicéntricas (p. ej., «multicentre», «43 children's hospitals», «AWAKEN study», "
+            "«national registry»).\n"
+            "- \"unclear\": la información no permite saberlo. No adivines.\n"
+            "Usa ÚNICAMENTE la información proporcionada. En \"evidence\" copia el fragmento del texto que "
+            "lo sustenta, o explica brevemente en español por qué no se puede determinar.\n\n"
+            f"ESTUDIOS (JSON):\n{json.dumps(payload, ensure_ascii=False, indent=1)}\n\n"
+            "Devuelve exactamente una entrada por cada id recibido."
+        )
+        with client.messages.stream(
+            model="claude-opus-5",
+            max_tokens=32000,
+            thinking={"type": "adaptive"},
+            output_config={"effort": "medium", "format": {"type": "json_schema", "schema": _CENTER_SCHEMA}},
+            system=_SCREEN_SYSTEM,
+            messages=[{"role": "user", "content": user}],
+        ) as stream:
+            message = stream.get_final_message()
+        if message.stop_reason == "refusal":
+            raise RuntimeError("El modelo declinó clasificar este lote de estudios.")
+        if message.stop_reason == "max_tokens":
+            raise RuntimeError("La respuesta de la clasificación quedó truncada; reintenta.")
+        text = next(b.text for b in message.content if b.type == "text")
+        batch_ids = {s["id"] for s in batch}
+        for e in json.loads(text)["studies"]:
+            if e["id"] in batch_ids:
+                results[e["id"]] = {"center_type": e["center_type"], "evidence": e["evidence"].strip()}
     return results
 
 

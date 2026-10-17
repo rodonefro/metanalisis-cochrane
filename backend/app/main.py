@@ -50,6 +50,8 @@ def _migrate_db():
         ("extraction_evidence", "TEXT"),
         ("analysis_suitability", "VARCHAR(20)"),
         ("suitability_note", "TEXT"),
+        ("center_type", "VARCHAR(10)"),
+        ("center_evidence", "TEXT"),
     ]
     new_search_cols = [
         ("source_type", "VARCHAR(20) DEFAULT 'database'"),

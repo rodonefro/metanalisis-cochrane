@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom'
 import { useMutation } from '@tanstack/react-query'
 import toast from 'react-hot-toast'
 import { createReview } from '../services/api'
+import MetaTypeToggle, { withObservationalTypes } from '../components/MetaTypeToggle'
 import { ArrowRight, ArrowLeft, Info, Target, Filter, CheckCircle2 } from 'lucide-react'
 
 const TABS = [
@@ -129,6 +130,12 @@ export default function NewReview() {
         {/* ── Tab: General ── */}
         {activeTab === 'general' && (
           <div className="card p-6 space-y-4">
+            <MetaTypeToggle
+              effectMeasure={form.effect_measure}
+              onSelect={(kind) => setForm((f) => kind === 'proportion'
+                ? { ...f, effect_measure: 'PROP', types_of_studies: withObservationalTypes(f.types_of_studies) }
+                : { ...f, effect_measure: f.effect_measure === 'PROP' ? 'OR' : f.effect_measure })}
+            />
             <div>
               <label className="label">Título *</label>
               <input

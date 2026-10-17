@@ -82,6 +82,8 @@ class StudyBase(BaseModel):
     extraction_evidence: Optional[str] = None
     analysis_suitability: Optional[str] = None
     suitability_note: Optional[str] = None
+    center_type: Optional[str] = None
+    center_evidence: Optional[str] = None
 
 
 class StudyCreate(StudyBase):

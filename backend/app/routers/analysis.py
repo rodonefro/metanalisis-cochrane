@@ -13,7 +13,7 @@ from ..services.eligibility import eligible_studies, pending_count, find_duplica
 from ..services.plots import _short_label
 from ..services.ai_generator import (
     screen_studies_with_ai, extract_quantitative_data, eligibility_block,
-    assess_risk_of_bias, ROB_DOMAIN_KEYS,
+    assess_risk_of_bias, ROB_DOMAIN_KEYS, classify_center_type,
     interpret_forest_plot, interpret_funnel_plot, interpret_grade_table, interpret_rob_plot,
 )
 
@@ -82,6 +82,8 @@ def run_analysis(review_id: int, db: Session = Depends(get_db)):
             )
 
     result_dict = result_to_dict(result)
+    if effect_measure == "PROP":
+        result_dict.update(_multicenter_sensitivity(study_data, model_type))
 
     # Plots are generated on-demand via /forest, /funnel, /grade endpoints
     # to avoid OOM — do NOT generate them here
@@ -108,6 +110,61 @@ def run_analysis(review_id: int, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(analysis)
     return analysis
+
+
+def _has_prop_data(s: dict) -> bool:
+    return s.get("events_intervention") is not None and bool(s.get("total_intervention"))
+
+
+def _multicenter_sensitivity(study_data: list[dict], model_type: str) -> dict:
+    """Center-type composition of the pooled studies and the analysis restricted to multicentre ones."""
+    usable = [s for s in study_data if _has_prop_data(s)]
+    counts = {"single": 0, "multi": 0, "unclear": 0, "unclassified": 0}
+    for s in usable:
+        counts[s.get("center_type") if s.get("center_type") in counts else "unclassified"] += 1
+    multi = [s for s in usable if s.get("center_type") == "multi"]
+    if len(multi) < 2:
+        sens = {"available": False,
+                "reason": f"solo {len(multi)} estudio(s) multicéntrico(s) con datos; se necesitan al menos 2"
+                          + (f" ({counts['unclassified']} sin clasificar: ejecuta «Clasificar centros»)"
+                             if counts["unclassified"] else "")}
+    else:
+        try:
+            sens = {"available": True, **result_to_dict(run_meta_analysis(multi, "PROP", model_type))}
+        except ValueError as exc:
+            sens = {"available": False, "reason": str(exc)}
+    return {"center_counts": counts, "sensitivity_multicenter": sens}
+
+
+@router.post("/ai-centers")
+def ai_classify_centers(review_id: int, db: Session = Depends(get_db)):
+    """AI classification of included studies as single-centre or multicentre (unclassified ones only)."""
+    review = db.query(Review).filter(Review.id == review_id).first()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+    included = eligible_studies(db, review_id)
+    pending = [s for s in included if not s.center_type]
+    if not pending:
+        return {"message": "Todos los estudios incluidos ya tienen tipo de centro; no se modificó ninguno.",
+                "classified": 0}
+    try:
+        decisions = classify_center_type(
+            [{c.name: getattr(s, c.name) for c in s.__table__.columns} for s in pending])
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Error al clasificar los centros: {exc}")
+    tally = {"single": 0, "multi": 0, "unclear": 0}
+    for s in pending:
+        d = decisions.get(s.id)
+        if d:
+            s.center_type, s.center_evidence = d["center_type"], d["evidence"] or None
+            tally[d["center_type"]] += 1
+    db.commit()
+    return {
+        "message": (f"Centros clasificados: {tally['multi']} multicéntricos, {tally['single']} unicéntricos, "
+                    f"{tally['unclear']} sin información suficiente."),
+        "classified": sum(tally.values()),
+        **tally,
+    }
 
 
 @router.get("/latest", response_model=AnalysisOut)
@@ -146,22 +203,32 @@ def _get_latest_or_404(review_id: int, db: Session):
 
 
 @router.get("/forest")
-def get_forest_plot(review_id: int, db: Session = Depends(get_db)):
-    """Return (or regenerate) the forest plot + AI interpretation."""
+def get_forest_plot(review_id: int, subset: str | None = None, db: Session = Depends(get_db)):
+    """Return (or regenerate) the forest plot + AI interpretation.
+    subset="multicenter" draws the sensitivity analysis restricted to multicentre studies."""
     review = db.query(Review).filter(Review.id == review_id).first()
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")
     analysis = _get_latest_or_404(review_id, db)
     result_dict = json.loads(analysis.results_json)
+    title = review.title or "Forest Plot"
+    if subset == "multicenter":
+        sens = result_dict.get("sensitivity_multicenter") or {}
+        if not sens.get("available"):
+            raise HTTPException(status_code=422, detail="Análisis de sensibilidad no disponible: "
+                                + (sens.get("reason") or "no es un metaanálisis de proporciones"))
+        result_dict = sens
+        title = f"{title} — sensibilidad: solo estudios multicéntricos"
 
     # Always regenerate (ensures fresh output, bypasses any stale cache)
     try:
         result = meta_result_from_dict(result_dict)
-        b64 = generate_forest_plot(result, title=review.title or "Forest Plot")
+        b64 = generate_forest_plot(result, title=title)
         if not b64:
             raise ValueError("generate_forest_plot returned empty result")
-        analysis.forest_plot_b64 = b64
-        db.commit()
+        if subset != "multicenter":
+            analysis.forest_plot_b64 = b64
+            db.commit()
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Error generating forest plot: {exc}")
 

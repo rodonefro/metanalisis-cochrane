@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { BarChart2, ChevronDown, ChevronUp, Play, Wand2, Download, Filter, Table, Zap, CheckCircle2, Loader2, ShieldAlert } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { runAnalysis, getLatestAnalysis, generateSection, getForestPlot, getFunnelPlot, getGradeTable, getRobPlot, aiScreenStudies, aiExtractData, aiAssessRob, computePrisma } from '../services/api'
+import { runAnalysis, getLatestAnalysis, generateSection, getForestPlot, getFunnelPlot, getGradeTable, getRobPlot, aiScreenStudies, aiExtractData, aiAssessRob, computePrisma, aiClassifyCenters, getReview } from '../services/api'
 import type { Analysis } from '../services/api'
 
 interface Props {
@@ -103,6 +103,10 @@ function PlotCard({
 export default function AnalysisPanel({ reviewId }: Props) {
   const [open, setOpen] = useState(true)
   const [forestB64, setForestB64] = useState<string | null>(null)
+  const [forestMultiB64, setForestMultiB64] = useState<string | null>(null)
+  const [forestMultiInterp, setForestMultiInterp] = useState<string>('')
+  const [loadingForestMulti, setLoadingForestMulti] = useState(false)
+  const [classifying, setClassifying] = useState(false)
   const [funnelB64, setFunnelB64] = useState<string | null>(null)
   const [gradeB64, setGradeB64] = useState<string | null>(null)
   const [robB64, setRobB64] = useState<string | null>(null)
@@ -121,6 +125,9 @@ export default function AnalysisPanel({ reviewId }: Props) {
   const [interpretation, setInterpretation] = useState<string>('')
   const [interpreting, setInterpreting] = useState(false)
   const qc = useQueryClient()
+
+  const { data: review } = useQuery({ queryKey: ['review', reviewId], queryFn: () => getReview(reviewId) })
+  const isProp = review?.effect_measure === 'PROP'
 
   const { data: analysis } = useQuery<Analysis>({
     queryKey: ['analysis', reviewId],
@@ -206,7 +213,7 @@ export default function AnalysisPanel({ reviewId }: Props) {
     { id: 'screening',  label: 'Cribado IA' },
     { id: 'prisma',     label: 'PRISMA' },
     { id: 'extraction', label: 'Extracción' },
-    { id: 'rob',        label: 'Riesgo de sesgo' },
+    { id: 'rob',        label: isProp ? 'Sesgo y centros' : 'Riesgo de sesgo' },
     { id: 'analysis',   label: 'Meta-análisis' },
     { id: 'plots',      label: 'Gráficas' },
   ]
@@ -233,6 +240,10 @@ export default function AnalysisPanel({ reviewId }: Props) {
       setPipelineStep('rob')
       toast.loading('Paso 4/6 — Evaluación del riesgo de sesgo con IA...', { id: 'pipeline' })
       await aiAssessRob(reviewId)
+      if (isProp) {
+        toast.loading('Paso 4/6 — Clasificando estudios unicéntricos / multicéntricos...', { id: 'pipeline' })
+        await aiClassifyCenters(reviewId)
+      }
 
       setPipelineStep('analysis')
       toast.loading('Paso 5/6 — Ejecutando meta-análisis estadístico...', { id: 'pipeline' })
@@ -258,6 +269,7 @@ export default function AnalysisPanel({ reviewId }: Props) {
       if (gradeRes.interpretation) setGradeInterp(gradeRes.interpretation)
       setRobB64(robRes.rob_b64)
       if (robRes.interpretation) setRobInterp(robRes.interpretation)
+      if (isProp) await handleForestMulti()
 
       toast.success('¡Pipeline IA completo! Análisis y gráficas listos.', { id: 'pipeline', duration: 5000 })
     } catch (e: any) {
@@ -266,6 +278,32 @@ export default function AnalysisPanel({ reviewId }: Props) {
       setPipelineRunning(false)
       setPipelineStep(null)
       setLoadingForest(false); setLoadingFunnel(false); setLoadingGrade(false); setLoadingRob(false)
+    }
+  }
+
+  const handleForestMulti = async () => {
+    setLoadingForestMulti(true)
+    try {
+      const res = await getForestPlot(reviewId, 'multicenter')
+      setForestMultiB64(res.forest_b64)
+      if (res.interpretation) setForestMultiInterp(res.interpretation)
+    } catch (e: any) {
+      toast.error(e.response?.data?.detail || 'Error al generar el forest plot de sensibilidad')
+    } finally {
+      setLoadingForestMulti(false)
+    }
+  }
+
+  const handleClassifyCenters = async () => {
+    setClassifying(true)
+    try {
+      const res = await aiClassifyCenters(reviewId)
+      qc.invalidateQueries({ queryKey: ['review', reviewId] })
+      toast.success(`${res.message} Vuelve a ejecutar el metaanálisis para actualizar la sensibilidad.`, { duration: 8000 })
+    } catch (e: any) {
+      toast.error(e.response?.data?.detail || 'Error al clasificar los centros')
+    } finally {
+      setClassifying(false)
     }
   }
 
@@ -413,6 +451,43 @@ export default function AnalysisPanel({ reviewId }: Props) {
             </div>
           )}
 
+          {/* Proportions: centre composition and sensitivity analysis restricted to multicentre studies */}
+          {results?.center_counts && (
+            <div className="border border-cochrane-200 rounded-lg p-4 space-y-2">
+              <p className="text-xs font-semibold text-cochrane-700 uppercase tracking-wide">
+                Análisis de sensibilidad — solo estudios multicéntricos
+              </p>
+              <p className="text-xs text-gray-600">
+                Estudios combinados: <strong>{results.center_counts.multi}</strong> multicéntricos ·{' '}
+                <strong>{results.center_counts.single}</strong> unicéntricos ·{' '}
+                <strong>{results.center_counts.unclear + results.center_counts.unclassified}</strong> sin determinar
+              </p>
+              {results.sensitivity_multicenter?.available ? (
+                <p className="text-sm text-gray-800">
+                  Proporción combinada (multicéntricos):{' '}
+                  <strong>
+                    {(results.sensitivity_multicenter.pooled.effect * 100).toFixed(1)} % [
+                    {(results.sensitivity_multicenter.pooled.ci_lower * 100).toFixed(1)},{' '}
+                    {(results.sensitivity_multicenter.pooled.ci_upper * 100).toFixed(1)}]
+                  </strong>{' '}
+                  · k={results.sensitivity_multicenter.k} · N={results.sensitivity_multicenter.total_n} ·
+                  I²={results.sensitivity_multicenter.heterogeneity?.I2?.toFixed(0)}%
+                  <span className="text-gray-500"> (principal: {(results.pooled.effect * 100).toFixed(1)} %)</span>
+                </p>
+              ) : (
+                <p className="text-xs text-amber-700">
+                  No se pudo realizar: {results.sensitivity_multicenter?.reason}
+                </p>
+              )}
+              {results.center_counts.unclassified > 0 && (
+                <button type="button" onClick={handleClassifyCenters} disabled={classifying} className="btn-secondary text-xs">
+                  {classifying ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />}
+                  {classifying ? 'Clasificando...' : 'Clasificar centros con IA'}
+                </button>
+              )}
+            </div>
+          )}
+
           {/* Studies included but dropped from the pooled estimate for lack of data */}
           {results?.excluded_studies?.length > 0 && (
             <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
@@ -448,6 +523,19 @@ export default function AnalysisPanel({ reviewId }: Props) {
                 interpretation={forestInterp}
                 onGenerate={handleForest}
               />
+
+              {results?.sensitivity_multicenter?.available && (
+                <PlotCard
+                  title="Forest Plot — solo multicéntricos (sensibilidad)"
+                  subtitle="Análisis de sensibilidad restringido a estudios multicéntricos"
+                  icon={BarChart2}
+                  iconColor="text-cochrane-500"
+                  b64={forestMultiB64}
+                  loading={loadingForestMulti || pipelineRunning}
+                  interpretation={forestMultiInterp}
+                  onGenerate={handleForestMulti}
+                />
+              )}
 
               <PlotCard
                 title="Funnel Plot (Gráfico de embudo)"

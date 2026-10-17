@@ -144,6 +144,8 @@ export interface Study {
   extraction_evidence: string | null
   analysis_suitability: 'quantitative' | 'narrative' | null
   suitability_note: string | null
+  center_type: 'single' | 'multi' | 'unclear' | null
+  center_evidence: string | null
 }
 
 export interface SearchSource {
@@ -264,8 +266,12 @@ export const generateSection = (reviewId: number, section: string, includeMetaRe
   ).then(r => r.data)
 
 // Individual plots (each returns b64 image + automatic AI interpretation)
-export const getForestPlot = (reviewId: number) =>
-  api.get<{ forest_b64: string; interpretation?: string }>(`/reviews/${reviewId}/analysis/forest`).then(r => r.data)
+export const getForestPlot = (reviewId: number, subset?: 'multicenter') =>
+  api.get<{ forest_b64: string; interpretation?: string }>(
+    `/reviews/${reviewId}/analysis/forest`, { params: subset ? { subset } : undefined },
+  ).then(r => r.data)
+export const aiClassifyCenters = (reviewId: number) =>
+  api.post<{ message: string; classified: number }>(`/reviews/${reviewId}/analysis/ai-centers`).then(r => r.data)
 export const getFunnelPlot = (reviewId: number) =>
   api.get<{ funnel_b64: string; interpretation?: string }>(`/reviews/${reviewId}/analysis/funnel`).then(r => r.data)
 export const getGradeTable = (reviewId: number) =>

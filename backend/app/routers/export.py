@@ -156,6 +156,7 @@ def _fresh_plots(review: Review, analysis: Analysis | None, studies: list) -> di
         "forest": analysis.forest_plot_b64 if analysis else None,
         "funnel": analysis.funnel_plot_b64 if analysis else None,
         "rob": analysis.rob_plot_b64 if analysis else None,
+        "forest_multi": None,
     }
     study_dicts = [{c.name: getattr(s, c.name) for c in s.__table__.columns} for s in studies]
     if analysis and analysis.results_json:
@@ -165,12 +166,59 @@ def _fresh_plots(review: Review, analysis: Analysis | None, studies: list) -> di
             plots["funnel"] = generate_funnel_plot(result, title="Funnel Plot") or plots["funnel"]
         except Exception:
             pass
+        try:
+            sens = json.loads(analysis.results_json).get("sensitivity_multicenter") or {}
+            if sens.get("available"):
+                plots["forest_multi"] = generate_forest_plot(
+                    meta_result_from_dict(sens),
+                    title=f"{review.title or ''} — sensitivity: multicentre studies only")
+        except Exception:
+            pass
     if any(s.get("rob_overall") for s in study_dicts):
         try:
             plots["rob"] = generate_rob_traffic_light(study_dicts) or plots["rob"]
         except Exception:
             pass
     return plots
+
+
+def _fmt_effect(eff, lo, hi, em: str) -> str:
+    if eff is None or lo is None or hi is None:
+        return "—"
+    if em == "PROP":
+        return f"{eff * 100:.1f}% [{lo * 100:.1f}, {hi * 100:.1f}]"
+    return f"{eff:.3f} [{lo:.3f}, {hi:.3f}]"
+
+
+def _fmt_interval(pi: dict, em: str) -> str:
+    lo, hi = pi.get("lower"), pi.get("upper")
+    if lo is None or hi is None:
+        return "—"
+    return f"[{lo * 100:.1f}%, {hi * 100:.1f}%]" if em == "PROP" else f"[{lo:.3f}, {hi:.3f}]"
+
+
+def _sensitivity_rows(res: dict, spanish: bool = False) -> list:
+    """Center-type composition and the multicentre-only sensitivity analysis (proportions)."""
+    rows = []
+    counts = res.get("center_counts")
+    if counts:
+        unclear = counts.get("unclear", 0) + counts.get("unclassified", 0)
+        rows.append(
+            ["Tipo de centro (estudios combinados)",
+             f"multicéntricos {counts.get('multi', 0)}; unicéntricos {counts.get('single', 0)}; sin determinar {unclear}"]
+            if spanish else
+            ["Study setting (pooled studies)",
+             f"multicentre {counts.get('multi', 0)}; single-centre {counts.get('single', 0)}; unclear {unclear}"])
+    sens = res.get("sensitivity_multicenter")
+    label = "Sensibilidad: solo multicéntricos" if spanish else "Sensitivity: multicentre only"
+    if sens and sens.get("available"):
+        p, h = sens.get("pooled") or {}, sens.get("heterogeneity") or {}
+        rows.append([label,
+                     f"{_fmt_effect(p.get('effect'), p.get('ci_lower'), p.get('ci_upper'), sens.get('effect_measure'))}; "
+                     f"k = {sens.get('k')}, N = {sens.get('total_n')}, I² = {h.get('I2', 0):.1f}%"])
+    elif sens:
+        rows.append([label, f"{'No realizado' if spanish else 'Not performed'} — {sens.get('reason')}"])
+    return rows
 
 
 def _ascii_filename(title: str) -> str:
@@ -704,6 +752,8 @@ def export_pdf(review_id: int, db: Session = Depends(get_db)):
          review.intervention_effects or review.results_text, st, level=3)
 
     _figure_page(story, plots["forest"], "Figure 3. Forest plot — pooled effect estimate.", st)
+    _figure_page(story, plots["forest_multi"],
+                 "Figure 3b. Sensitivity analysis restricted to multicentre studies.", st)
 
     _sub(story, "4.2.2", "Secondary outcomes",
          review.secondary_outcomes, st, level=3)
@@ -735,16 +785,13 @@ def export_pdf(review_id: int, db: Session = Depends(get_db)):
                 ["Effect measure", "Proportion (single arm, logit, back-transformed)" if em == "PROP" else em],
                 ["Studies (k)", str(res.get("k", "—"))],
                 ["Participants (N)", str(res.get("total_n", "—"))],
-                ["Pooled effect (95% CI)",
-                 f"{eff:.3f} [{lo:.3f}, {hi:.3f}]" if eff is not None else "—"],
-                ["Prediction interval",
-                 f"[{pi.get('lower'):.3f}, {pi.get('upper'):.3f}]"
-                 if pi.get("lower") is not None else "—"],
+                ["Pooled effect (95% CI)", _fmt_effect(eff, lo, hi, em)],
+                ["Prediction interval", _fmt_interval(pi, em)],
                 ["I²",  f"{h.get('I2', 0):.1f}%"],
                 ["τ²",  f"{h.get('tau2', 0):.4f}"],
                 ["Q (p-value)", f"{h.get('Q', 0):.2f} (p={h.get('Q_pvalue', 0):.3f})"],
                 ["Model", f"{res.get('model', 'random')}-effects"],
-            ]
+            ] + _sensitivity_rows(res)
             st_tbl = Table(stat_rows, colWidths=[6*cm, 10*cm])
             st_tbl.setStyle(TableStyle([
                 ("BACKGROUND",    (0, 0), (-1, 0), C_BLUE),
@@ -757,7 +804,7 @@ def export_pdf(review_id: int, db: Session = Depends(get_db)):
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
                 ("LEFTPADDING",   (0, 0), (-1, -1), 6),
             ]))
-            story.append(_para("Table 2. Summary of meta-analysis results", st["label"]))
+            story.append(_para("Table 3. Summary of meta-analysis results", st["label"]))
             story.append(Spacer(1, 0.1*cm))
             story.append(st_tbl)
             story.append(Spacer(1, 0.3*cm))
@@ -1175,24 +1222,21 @@ def export_docx(review_id: int, db: Session = Depends(get_db)):
             eff, lo, hi = p.get("effect"), p.get("ci_lower"), p.get("ci_upper")
             pi  = res.get("prediction_interval", {}) or {}
 
-            _docx_add_heading(d, "Tabla 2. Resumen de resultados del metaanálisis", 3)
-            stat_tbl = d.add_table(rows=10, cols=2)
-            stat_tbl.style = "Table Grid"
+            _docx_add_heading(d, "Tabla 3. Resumen de resultados del metaanálisis", 3)
             rows_data = [
                 ("Medida de efecto", "Proporción de un solo brazo (logit, retransformada)" if em == "PROP" else em),
                 ("Estudios (k)",      str(res.get("k", "—"))),
                 ("Participantes (N)", str(res.get("total_n", "—"))),
-                ("Efecto combinado (IC 95%)",
-                 f"{eff:.3f} [{lo:.3f}, {hi:.3f}]" if eff is not None else "—"),
-                ("Intervalo de predicción",
-                 f"[{pi.get('lower'):.3f}, {pi.get('upper'):.3f}]"
-                 if pi.get("lower") is not None else "—"),
+                ("Efecto combinado (IC 95%)", _fmt_effect(eff, lo, hi, em)),
+                ("Intervalo de predicción", _fmt_interval(pi, em)),
                 ("I²",               f"{h.get('I2', 0):.1f}%"),
                 ("τ²",               f"{h.get('tau2', 0):.4f}"),
                 ("Q (valor p)",      f"{h.get('Q', 0):.2f} (p={h.get('Q_pvalue', 0):.3f})"),
                 ("Modelo",           f"{res.get('model', 'random')}-effects"),
                 ("Fecha del análisis", datetime.utcnow().strftime("%d/%m/%Y")),
-            ]
+            ] + [tuple(r) for r in _sensitivity_rows(res, spanish=True)]
+            stat_tbl = d.add_table(rows=len(rows_data), cols=2)
+            stat_tbl.style = "Table Grid"
             for row, (k, v) in zip(stat_tbl.rows, rows_data):
                 row.cells[0].text = k
                 row.cells[1].text = v
@@ -1206,15 +1250,16 @@ def export_docx(review_id: int, db: Session = Depends(get_db)):
         except Exception:
             pass
 
-    # Forest plot
-    if analysis and analysis.forest_plot_b64:
+    plots = _fresh_plots(review, analysis, studies)
+    if plots["forest"]:
         d.add_paragraph()
-        _docx_embed_b64_image(d, analysis.forest_plot_b64, 16,
+        _docx_embed_b64_image(d, plots["forest"], 16,
                                "Figura 2. Forest plot — estimación del efecto combinado.")
-
-    # Funnel plot
-    if analysis and analysis.funnel_plot_b64:
-        _docx_embed_b64_image(d, analysis.funnel_plot_b64, 10,
+    if plots["forest_multi"]:
+        _docx_embed_b64_image(d, plots["forest_multi"], 16,
+                               "Figura 2b. Análisis de sensibilidad restringido a estudios multicéntricos.")
+    if plots["funnel"]:
+        _docx_embed_b64_image(d, plots["funnel"], 10,
                                "Figura 3. Funnel plot — evaluación del sesgo de publicación.")
 
     # ── 5. Discussion ───────────────────────────────────────────────────────

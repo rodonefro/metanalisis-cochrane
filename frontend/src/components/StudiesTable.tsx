@@ -17,9 +17,13 @@ const ROB_COLORS: Record<string, string> = {
 interface Props {
   reviewId: number
   studies: Study[]
+  showCenters?: boolean
 }
 
-export default function StudiesTable({ reviewId, studies }: Props) {
+const CENTER_LABEL: Record<string, string> = { multi: 'Multicéntrico', single: 'Unicéntrico', unclear: 'Centro sin determinar' }
+const NEXT_CENTER: Record<string, 'single' | 'multi' | 'unclear'> = { multi: 'single', single: 'unclear', unclear: 'multi' }
+
+export default function StudiesTable({ reviewId, studies, showCenters = false }: Props) {
   const qc = useQueryClient()
   const fileRef = useRef<HTMLInputElement>(null)
   const mergeRef = useRef<HTMLInputElement>(null)
@@ -142,6 +146,13 @@ export default function StudiesTable({ reviewId, studies }: Props) {
       updateStudy(reviewId, id, { included }),
     onSuccess: () => invalidate(),
     onError: () => toast.error('Error al cambiar inclusión'),
+  })
+
+  const centerMutation = useMutation({
+    mutationFn: ({ id, center_type }: { id: number; center_type: 'single' | 'multi' | 'unclear' }) =>
+      updateStudy(reviewId, id, { center_type, center_evidence: 'Clasificado manualmente por el autor' }),
+    onSuccess: () => invalidate(),
+    onError: () => toast.error('Error al cambiar el tipo de centro'),
   })
 
   const extractMutation = useMutation({
@@ -483,6 +494,22 @@ export default function StudiesTable({ reviewId, studies }: Props) {
                           >
                             {s.analysis_suitability === 'quantitative' ? 'Cuantitativo' : 'Solo narrativo'}
                           </span>
+                        )}
+                        {showCenters && isIncluded && (
+                          <button
+                            type="button"
+                            title={`${s.center_evidence || 'Sin clasificar'} — clic para cambiar`}
+                            onClick={() => centerMutation.mutate({
+                              id: s.id, center_type: NEXT_CENTER[s.center_type || 'unclear'],
+                            })}
+                            className={`inline-block mt-0.5 ml-1 text-[10px] px-1.5 py-0.5 rounded-full ${
+                              s.center_type === 'multi' ? 'bg-indigo-100 text-indigo-700'
+                              : s.center_type === 'single' ? 'bg-sky-100 text-sky-700'
+                              : 'bg-gray-100 text-gray-500'
+                            }`}
+                          >
+                            {s.center_type ? CENTER_LABEL[s.center_type] : 'Centro: sin clasificar'}
+                          </button>
                         )}
                         {s.journal && isIncluded && <p className="text-gray-400 truncate">{s.journal}</p>}
                       </td>

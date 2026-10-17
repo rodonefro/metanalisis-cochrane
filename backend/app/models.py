@@ -211,6 +211,9 @@ class Study(Base):
     # review outcome, can enter the meta-analysis) or "narrative" (narrative synthesis only).
     analysis_suitability = Column(String(20), nullable=True)
     suitability_note = Column(Text, nullable=True)
+    # "single" | "multi" | "unclear" — single-centre vs multicentre study, with the text supporting it.
+    center_type = Column(String(10), nullable=True)
+    center_evidence = Column(Text, nullable=True)
 
     review = relationship("Review", back_populates="studies")
 
