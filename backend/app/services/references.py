@@ -293,7 +293,8 @@ def detect_format(filename: str, content: bytes) -> str:
         return "bibtex"
     raise ValueError(
         f"Formato no reconocido: '{filename}'. Usa RIS (.ris), BibTeX (.bib), "
-        "PubMed (.nbib/.txt), CSV o Excel."
+        "PubMed (.nbib/.txt), CSV o Excel. Desde PubMed: «Save» → Format: «PubMed» "
+        "(el formato «Abstract» o «Summary (text)» no contiene los campos de cada artículo)."
     )
 
 

@@ -151,7 +151,7 @@ export default function Dashboard() {
                     className="inline-flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg border border-green-200 text-green-700 bg-green-50 hover:bg-green-100 transition-colors"
                     title="Abrir la sección de estudios para cargar la base de datos en Excel o CSV"
                   >
-                    <Upload size={14} /> Cargar Excel/CSV
+                    <Upload size={14} /> Cargar Excel/CSV/PubMed
                   </button>
                   <button
                     onClick={() => navigate(`/reviews/${r.id}`)}

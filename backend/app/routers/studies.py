@@ -10,6 +10,7 @@ from ..database import get_db
 from ..models import Review, Study
 from ..schemas import StudyCreate, StudyUpdate, StudyOut
 from ..services.file_parser import parse_file
+from ..services.references import detect_format, parse_references
 from .references import import_records
 
 router = APIRouter(prefix="/reviews/{review_id}/studies", tags=["studies"])
@@ -72,6 +73,18 @@ def create_study(review_id: int, payload: StudyCreate, db: Session = Depends(get
     return study
 
 
+_FORMAT_SOURCE = {"nbib": "PubMed"}
+
+
+def _parse_study_file(content: bytes, filename: str) -> tuple[list[dict], str | None]:
+    """Rows from Excel/CSV, or records from PubMed (.txt/.nbib), RIS or BibTeX exports.
+    Returns the rows and the source database the format implies (e.g. PubMed), if any."""
+    fmt = detect_format(filename, content)
+    if fmt == "table":
+        return parse_file(content, filename), None
+    return parse_references(content, filename)[1], _FORMAT_SOURCE.get(fmt)
+
+
 @router.post("/upload", status_code=status.HTTP_201_CREATED)
 async def upload_studies(
     review_id: int,
@@ -93,14 +106,15 @@ async def upload_studies(
     _get_review_or_404(review_id, db)
     content = await file.read()
     try:
-        studies_data = parse_file(content, file.filename or "upload.csv")
+        studies_data, format_source = _parse_study_file(content, file.filename or "upload.csv")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc))
 
     # Rows keep their own source column when present; otherwise the label chosen
     # in the UI, otherwise the file name. Duplicates are merged and logged so the
     # PRISMA flow stays exact.
-    default_source = source_database or re.sub(r"\.[^.]+$", "", file.filename or "Importación")
+    default_source = (source_database or format_source
+                      or re.sub(r"\.[^.]+$", "", file.filename or "Importación"))
     if role not in ("auto", "found", "included"):
         raise HTTPException(status_code=422, detail="role debe ser auto, found o included")
     result = import_records(db, review_id, studies_data, default_source, role=role)
@@ -131,11 +145,11 @@ async def upload_merge_studies(
         filename = upload_file.filename or "upload.csv"
         source_db_name = re.sub(r"\.[^.]+$", "", filename)
         try:
-            studies_data = parse_file(content, filename)
+            studies_data, format_source = _parse_study_file(content, filename)
         except ValueError as exc:
             errors.append(f"{filename}: {exc}")
             continue
-        result = import_records(db, review_id, studies_data, source_db_name, role="auto")
+        result = import_records(db, review_id, studies_data, format_source or source_db_name, role="auto")
         total_added += result["added"]
         total_merged += result["duplicates_merged"]
 

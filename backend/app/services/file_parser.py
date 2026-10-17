@@ -293,6 +293,9 @@ _COLUMN_MAP = {
     "funding_source":               "notes",
     "conflicts_of_interest":        "notes",
     "citation":                     "notes",
+    # PubMed "Save → CSV" export
+    "publication_year":             "year",
+    "journal/book":                 "journal",
     "cite_key":                     "study_label",
     "cite key":                     "study_label",
     "citation_key":                 "study_label",

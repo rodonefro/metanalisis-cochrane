@@ -193,7 +193,7 @@ export default function StudiesTable({ reviewId, studies, showCenters = false }:
           type="file"
           ref={fileRef}
           className="hidden"
-          accept=".csv,.xlsx,.xls"
+          accept=".csv,.xlsx,.xls,.txt,.nbib,.ris,.bib"
           onChange={(e) => {
             const file = e.target.files?.[0]
             if (file) uploadMutation.mutate(file)
@@ -204,7 +204,7 @@ export default function StudiesTable({ reviewId, studies, showCenters = false }:
           type="file"
           ref={mergeRef}
           className="hidden"
-          accept=".csv,.xlsx,.xls"
+          accept=".csv,.xlsx,.xls,.txt,.nbib,.ris,.bib"
           multiple
           onChange={(e) => {
             const files = Array.from(e.target.files || [])
@@ -257,10 +257,10 @@ export default function StudiesTable({ reviewId, studies, showCenters = false }:
             onClick={() => fileRef.current?.click()}
             disabled={uploadMutation.isPending}
             className="btn-primary text-xs"
-            title="Cargar la base de datos de estudios desde Excel (.xlsx/.xls) o CSV — plantilla propia, Elicit IA o SciSpace IA"
+            title="Cargar estudios desde Excel (.xlsx/.xls), CSV, PubMed (.txt/.nbib en formato PubMed), RIS o BibTeX — plantilla propia, Elicit IA, SciSpace IA, PubMed, Scopus, Zotero..."
           >
             <Upload size={14} />
-            {uploadMutation.isPending ? 'Importando...' : 'Cargar Excel/CSV'}
+            {uploadMutation.isPending ? 'Importando...' : 'Cargar Excel/CSV/PubMed'}
           </button>
           {studies.length > 0 && (
             <button
@@ -311,7 +311,7 @@ export default function StudiesTable({ reviewId, studies, showCenters = false }:
                 title="Compatible con plantilla propia, exportaciones de Elicit IA y de SciSpace IA — las columnas se detectan automáticamente"
               >
                 <Upload size={14} />
-                {uploadMutation.isPending ? 'Importando...' : 'Importar Excel/CSV'}
+                {uploadMutation.isPending ? 'Importando...' : 'Importar Excel/CSV/PubMed'}
               </button>
               <button
                 type="button"
