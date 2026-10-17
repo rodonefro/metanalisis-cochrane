@@ -32,6 +32,7 @@ export interface Review extends ReviewSummary {
   objectives: string | null
   inclusion_criteria: string | null
   exclusion_criteria: string | null
+  custom_exclusion_reasons?: string | null
   types_of_studies: string | null
   subgroup_study_types: string | null
   types_of_participants: string | null

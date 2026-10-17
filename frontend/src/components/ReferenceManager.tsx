@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Library, ChevronDown, ChevronUp, Upload, Download, X, CheckCircle2, XCircle, HelpCircle,
-  RotateCcw, Search, ExternalLink, FileText,
+  RotateCcw, Search, ExternalLink, FileText, ListChecks,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  importReferences, exportReferences, setScreeningDecision, listSearches,
+  importReferences, exportReferences, setScreeningDecision, listSearches, getReview, updateReview,
   type Study, type SearchSource,
 } from '../services/api'
+import { exclusionReasonGroups, loadCustomReasons, parseCriteria } from './screeningReasons'
 
 interface Props {
   reviewId: number
@@ -18,18 +19,6 @@ interface Props {
 const KNOWN_SOURCES = [
   'PubMed/MEDLINE', 'Embase', 'Scopus', 'Web of Science', 'Cochrane CENTRAL', 'LILACS', 'SciELO',
   'CINAHL', 'PsycINFO', 'Google Scholar', 'ClinicalTrials.gov', 'WHO ICTRP', 'Elicit IA', 'SciSpace IA',
-]
-
-const EXCLUSION_REASONS = [
-  'Población incorrecta',
-  'Intervención incorrecta',
-  'Comparador incorrecto',
-  'Desenlace no evaluado',
-  'Diseño de estudio incorrecto',
-  'Tipo de publicación (revisión, editorial, carta, resumen de congreso)',
-  'Estudio en animales o in vitro',
-  'Datos insuficientes o no extraíbles',
-  'Idioma o fecha fuera de los criterios',
 ]
 
 type Decision = 'include' | 'exclude' | 'maybe' | null
@@ -316,7 +305,7 @@ export default function ReferenceManager({ reviewId, studies }: Props) {
 
 // ── Rayyan-style screening ─────────────────────────────────────────────────────
 
-function ScreeningModal({
+export function ScreeningModal({
   reviewId, studies, searches, onClose, onChanged,
 }: {
   reviewId: number
@@ -334,6 +323,29 @@ function ScreeningModal({
   const [reason, setReason] = useState('')
   const [customReason, setCustomReason] = useState('')
   const [stage, setStage] = useState<'title_abstract' | 'full_text'>('title_abstract')
+  const [saveReason, setSaveReason] = useState(true)
+  const [showCriteria, setShowCriteria] = useState(true)
+  const qc = useQueryClient()
+  const { data: review } = useQuery({ queryKey: ['review', reviewId], queryFn: () => getReview(reviewId) })
+  const reasonGroups = useMemo(() => exclusionReasonGroups(review), [review])
+  const inclusionItems = useMemo(() => parseCriteria(review?.inclusion_criteria), [review?.inclusion_criteria])
+  const exclusionItems = useMemo(() => parseCriteria(review?.exclusion_criteria), [review?.exclusion_criteria])
+
+  const rememberReason = async (r: string) => {
+    const known = reasonGroups.some(g => g.reasons.includes(r))
+    if (known || !review) return
+    try {
+      await updateReview(reviewId, {
+        custom_exclusion_reasons: JSON.stringify([...loadCustomReasons(review), r]),
+      })
+      qc.invalidateQueries({ queryKey: ['review', reviewId] })
+      setReason(r)
+      setCustomReason('')
+      toast.success('Motivo agregado a la lista de esta revisión')
+    } catch {
+      toast.error('No se pudo guardar el motivo en la lista')
+    }
+  }
 
   useEffect(() => { storageSet(`${kwKey}-inc`, incTerms) }, [incTerms, kwKey])
   useEffect(() => { storageSet(`${kwKey}-exc`, excTerms) }, [excTerms, kwKey])
@@ -387,6 +399,7 @@ function ScreeningModal({
       stage,
       reason: decision === 'exclude' ? finalReason : decision === 'maybe' ? 'Requiere revisión a texto completo' : null,
     })
+    if (decision === 'exclude' && reason === '__other' && saveReason) rememberReason(finalReason)
     // In the "pending" view the record leaves the list; elsewhere move on.
     if (filter !== 'pending') goNext()
     else if (idx >= 0 && visible[idx + 1]) setSelectedId(visible[idx + 1].id)
@@ -449,6 +462,34 @@ function ScreeningModal({
           <button type="button" onClick={onClose} className="text-gray-400 hover:text-gray-700" title="Cerrar (Esc)">
             <X size={20} />
           </button>
+        </div>
+
+        {/* Review criteria, Rayyan-style, always in view while deciding */}
+        <div className="px-4 py-2 border-b border-gray-200">
+          <button type="button" onClick={() => setShowCriteria(v => !v)}
+            className="inline-flex items-center gap-1 text-xs font-semibold text-cochrane-700">
+            <ListChecks size={14} /> Criterios de la revisión {showCriteria ? '▲' : '▼'}
+          </button>
+          {showCriteria && (
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-2 max-h-40 overflow-y-auto">
+              <div>
+                <p className="text-[11px] font-semibold text-green-700 mb-1">Inclusión</p>
+                {inclusionItems.length ? (
+                  <ul className="text-[11px] text-gray-700 space-y-0.5 list-disc list-inside">
+                    {inclusionItems.map((c, i) => <li key={i}>{c}</li>)}
+                  </ul>
+                ) : <p className="text-[11px] text-gray-400">Sin criterios de inclusión definidos.</p>}
+              </div>
+              <div>
+                <p className="text-[11px] font-semibold text-red-700 mb-1">Exclusión</p>
+                {exclusionItems.length ? (
+                  <ol className="text-[11px] text-gray-700 space-y-0.5 list-decimal list-inside">
+                    {exclusionItems.map((c, i) => <li key={i}>{c}</li>)}
+                  </ol>
+                ) : <p className="text-[11px] text-gray-400">Sin criterios de exclusión definidos.</p>}
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Keyword highlighting */}
@@ -592,16 +633,26 @@ function ScreeningModal({
                       <label className="label">Motivo de exclusión</label>
                       <select className="input text-xs" value={reason} onChange={e => setReason(e.target.value)}>
                         <option value="">— elegir —</option>
-                        {EXCLUSION_REASONS.map(r => <option key={r} value={r}>{r}</option>)}
-                        <option value="__other">Otro (escribir)</option>
+                        {reasonGroups.map(g => (
+                          <optgroup key={g.label} label={g.label}>
+                            {g.reasons.map(r => <option key={r} value={r}>{r}</option>)}
+                          </optgroup>
+                        ))}
+                        <option value="__other">Otro motivo (escribir)…</option>
                       </select>
                       {reason === '__other' && (
-                        <input
-                          className="input text-xs mt-2"
-                          placeholder="Motivo de exclusión"
-                          value={customReason}
-                          onChange={e => setCustomReason(e.target.value)}
-                        />
+                        <div className="mt-2 space-y-1">
+                          <input
+                            className="input text-xs"
+                            placeholder="Escribe el motivo de exclusión"
+                            value={customReason}
+                            onChange={e => setCustomReason(e.target.value)}
+                          />
+                          <label className="flex items-center gap-1.5 text-[11px] text-gray-600">
+                            <input type="checkbox" checked={saveReason} onChange={e => setSaveReason(e.target.checked)} />
+                            Agregar este motivo a la lista predefinida de esta revisión
+                          </label>
+                        </div>
                       )}
                     </div>
                   </div>

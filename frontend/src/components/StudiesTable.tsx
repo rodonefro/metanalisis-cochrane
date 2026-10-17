@@ -1,12 +1,13 @@
 import { useState, useRef } from 'react'
-import { Upload, Plus, Trash2, ChevronDown, ChevronUp, Database, Download, Merge, Wand2, CheckCircle2, XCircle, Lock, RotateCcw, ShieldCheck } from 'lucide-react'
+import { Upload, Plus, Trash2, ChevronDown, ChevronUp, Database, Download, Merge, Wand2, CheckCircle2, XCircle, Lock, RotateCcw, ShieldCheck, ListChecks } from 'lucide-react'
 import toast from 'react-hot-toast'
-import { useMutation, useQueryClient } from '@tanstack/react-query'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  deleteStudy, uploadStudies, createStudy, mergeStudyDatabases, downloadStudies, aiScreenStudies, aiExtractData, updateStudy, resetScreening, aiAssessRob, API_BASE,
+  deleteStudy, uploadStudies, createStudy, mergeStudyDatabases, downloadStudies, aiScreenStudies, aiExtractData, updateStudy, resetScreening, aiAssessRob, listSearches, API_BASE,
   type Study, type ExtractionReportItem, type ImportRole,
 } from '../services/api'
 import StudiesDatabaseModal from './StudiesDatabaseModal'
+import { ScreeningModal } from './ReferenceManager'
 
 const ROB_COLORS: Record<string, string> = {
   low: 'bg-green-100 text-green-700',
@@ -131,6 +132,12 @@ export default function StudiesTable({ reviewId, studies, showCenters = false }:
   })
 
   const screening = screenMutation.isPending || repeatMutation.isPending
+  const [manualOpen, setManualOpen] = useState(false)
+  const { data: searches = [] } = useQuery({
+    queryKey: ['searches', reviewId],
+    queryFn: () => listSearches(reviewId),
+    enabled: manualOpen,
+  })
 
   const confirmRepeat = () => {
     if (confirm(
@@ -185,6 +192,16 @@ export default function StudiesTable({ reviewId, studies, showCenters = false }:
           reviewId={reviewId}
           studies={studies}
           onClose={() => setShowDb(false)}
+        />
+      )}
+
+      {manualOpen && (
+        <ScreeningModal
+          reviewId={reviewId}
+          studies={studies}
+          searches={searches}
+          onClose={() => setManualOpen(false)}
+          onChanged={invalidate}
         />
       )}
 
@@ -272,6 +289,16 @@ export default function StudiesTable({ reviewId, studies, showCenters = false }:
             >
               <RotateCcw size={14} className={repeatMutation.isPending ? 'animate-spin' : ''} />
               {repeatMutation.isPending ? 'Repitiendo cribado...' : 'Repetir cribado'}
+            </button>
+          )}
+          {studies.length > 0 && (
+            <button
+              type="button"
+              onClick={() => setManualOpen(true)}
+              className="btn-secondary text-xs"
+              title="Revisa cada estudio y decide incluir / quizás / excluir con el motivo de exclusión según tus criterios (tipo Rayyan)"
+            >
+              <ListChecks size={14} /> Cribado manual (tipo Rayyan)
             </button>
           )}
           <button type="button" onClick={() => setOpen((o) => !o)} aria-label={open ? 'Contraer' : 'Expandir'}>

@@ -89,6 +89,9 @@ class Review(Base):
     prospero_json = Column(Text, nullable=True)
     prospero_question_hash = Column(String(64), nullable=True)
 
+    # JSON list of exclusion reasons the author added during screening (reused as options).
+    custom_exclusion_reasons = Column(Text, nullable=True)
+
     studies = relationship("Study", back_populates="review", cascade="all, delete-orphan")
     analyses = relationship("Analysis", back_populates="review", cascade="all, delete-orphan")
 
