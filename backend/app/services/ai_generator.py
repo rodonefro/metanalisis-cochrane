@@ -568,13 +568,45 @@ _SCREEN_SYSTEM = (
 )
 
 
-def screen_studies_with_ai(review: dict, studies: list[dict]) -> dict:
+INCLUDE_OPTION = "Cumple todos los criterios"
+
+
+def _screen_schema(reason_options: list[str] | None) -> dict:
+    """The screening schema; with reason options, "criterion" must be one of them verbatim."""
+    if not reason_options:
+        return _SCREEN_SCHEMA
+    import copy
+    schema = copy.deepcopy(_SCREEN_SCHEMA)
+    enum = [INCLUDE_OPTION] + [r for r in dict.fromkeys(reason_options) if r and r != INCLUDE_OPTION]
+    schema["properties"]["decisions"]["items"]["properties"]["criterion"] = {"type": "string", "enum": enum}
+    return schema
+
+
+def screen_studies_with_ai(review: dict, studies: list[dict], reason_options: list[str] | None = None) -> dict:
     """
     Apply the review's eligibility criteria to each study.
+    reason_options: the author's exclusion-reason list; when given, "criterion" is one of them
+    (or INCLUDE_OPTION) so AI decisions use the same reasons as manual screening.
     Returns {study_id: {"decision": "include"|"exclude"|"uncertain", "criterion": str, "reason": str}}.
     Raises on a refusal or an unparseable response instead of guessing a decision.
     """
     import json
+
+    schema = _screen_schema(reason_options)
+    if reason_options:
+        options = schema["properties"]["decisions"]["items"]["properties"]["criterion"]["enum"][1:]
+        options_text = "\n".join(f"- {r}" for r in options)
+        criterion_rule = (
+            "En \"criterion\" elige EXACTAMENTE una de las opciones de la lista de motivos del autor "
+            f"(cópiala tal cual); para \"include\" usa \"{INCLUDE_OPTION}\"; para \"uncertain\" elige "
+            "el motivo cuyo criterio no se puede verificar. Prefiere el motivo más específico (un criterio "
+            "concreto antes que un motivo general).\nLISTA DE MOTIVOS DEL AUTOR:\n" + options_text + "\n"
+        )
+    else:
+        criterion_rule = (
+            "En \"criterion\" escribe el criterio concreto que determinó la decisión (para "
+            "\"include\", escribe \"Cumple todos los criterios\"). "
+        )
 
     criteria = eligibility_block(review)
     title = review.get("title") or "Revisión sistemática"
@@ -634,8 +666,8 @@ def screen_studies_with_ai(review: dict, studies: list[dict]) -> dict:
             "e \"uncertain\" usa \"not_applicable\". En \"suitability_note\" indica en español qué "
             "datos cuantitativos aporta y para qué desenlace, o qué falta. La analizabilidad NUNCA "
             "cambia la decisión: un estudio elegible sin datos numéricos se incluye igualmente.\n\n"
-            "En \"criterion\" escribe el criterio concreto que determinó la decisión (para "
-            "\"include\", escribe \"Cumple todos los criterios\"). En \"reason\" explica en español, "
+            + criterion_rule +
+            "En \"reason\" explica en español, "
             "en una o dos frases, la evidencia del estudio que sustenta la decisión. "
             "Devuelve exactamente una decisión por cada id recibido."
         )
@@ -646,7 +678,7 @@ def screen_studies_with_ai(review: dict, studies: list[dict]) -> dict:
             thinking={"type": "adaptive"},
             output_config={
                 "effort": "high",
-                "format": {"type": "json_schema", "schema": _SCREEN_SCHEMA},
+                "format": {"type": "json_schema", "schema": schema},
             },
             system=_SCREEN_SYSTEM,
             messages=[{"role": "user", "content": user}],

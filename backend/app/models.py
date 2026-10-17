@@ -217,6 +217,8 @@ class Study(Base):
     # "single" | "multi" | "unclear" — single-centre vs multicentre study, with the text supporting it.
     center_type = Column(String(10), nullable=True)
     center_evidence = Column(Text, nullable=True)
+    # The AI screener's explanation of its include/exclude decision.
+    ai_screening_note = Column(Text, nullable=True)
 
     review = relationship("Review", back_populates="studies")
 

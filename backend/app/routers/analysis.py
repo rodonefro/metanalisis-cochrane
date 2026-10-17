@@ -1,6 +1,7 @@
 import json
 from datetime import datetime
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Body, Depends, HTTPException
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from ..database import get_db
@@ -355,8 +356,26 @@ def compute_prisma_flow(review_id: int, db: Session = Depends(get_db)):
     return sync_prisma(db, review)
 
 
+class ScreenRequest(BaseModel):
+    reasons: list[str] | None = None      # the author's exclusion-reason list (Rayyan-style)
+    study_ids: list[int] | None = None    # screen these records, even if already decided
+    dry_run: bool = False                 # return suggestions without saving
+
+
+def _decision_reason(decision: dict, with_options: bool) -> str | None:
+    """exclusion_reason stored for an AI decision; with the author's list it is the chosen reason."""
+    kind, criterion = decision["decision"], decision["criterion"]
+    if kind == "include":
+        return None
+    if kind == "exclude":
+        return criterion if with_options else f"{criterion}: {decision['reason']}"
+    return (f"Requiere revisión a texto completo — {criterion}" if with_options
+            else f"Requiere revisión a texto completo — {criterion}: {decision['reason']}")
+
+
 @router.post("/ai-screen")
-def ai_screen_studies(review_id: int, db: Session = Depends(get_db)):
+def ai_screen_studies(review_id: int, payload: ScreenRequest | None = Body(None),
+                      db: Session = Depends(get_db)):
     """Use AI to screen pending studies against PICO criteria and set included/exclusion_reason.
 
     Studies that already have an inclusion decision (manually toggled by the user,
@@ -368,11 +387,19 @@ def ai_screen_studies(review_id: int, db: Session = Depends(get_db)):
     if not review:
         raise HTTPException(status_code=404, detail="Review not found")
 
+    payload = payload or ScreenRequest()
+    reasons = [r.strip() for r in (payload.reasons or []) if r and r.strip()] or None
     all_studies = db.query(Study).filter(Study.review_id == review_id).all()
     if not all_studies:
         raise HTTPException(status_code=422, detail="No hay estudios para cribar.")
 
-    pending_studies = [s for s in all_studies if not s.screening_reviewed]
+    if payload.study_ids:
+        wanted = set(payload.study_ids)
+        pending_studies = [s for s in all_studies if s.id in wanted]
+        if not pending_studies:
+            raise HTTPException(status_code=404, detail="Estudio no encontrado en esta revisión.")
+    else:
+        pending_studies = [s for s in all_studies if not s.screening_reviewed]
     already_reviewed = len(all_studies) - len(pending_studies)
 
     if not pending_studies:
@@ -396,7 +423,27 @@ def ai_screen_studies(review_id: int, db: Session = Depends(get_db)):
             ),
         )
 
-    duplicates = find_duplicates(all_studies, pending_studies)
+    if payload.dry_run:
+        try:
+            decisions = screen_studies_with_ai(
+                review_dict,
+                [{c.name: getattr(s, c.name) for c in s.__table__.columns} for s in pending_studies],
+                reasons,
+            )
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"Error en cribado IA: {exc}")
+        return {"suggestions": {
+            sid: {
+                "decision": "maybe" if d["decision"] == "uncertain" else d["decision"],
+                "reason": _decision_reason(d, bool(reasons)),
+                "explanation": d["reason"],
+                "suitability": None if d["suitability"] == "not_applicable" else d["suitability"],
+                "suitability_note": d["suitability_note"] or None,
+            }
+            for sid, d in decisions.items()
+        }}
+
+    duplicates = {} if payload.study_ids else find_duplicates(all_studies, pending_studies)
     for study in pending_studies:
         original = duplicates.get(study.id)
         if original is None:
@@ -417,7 +464,7 @@ def ai_screen_studies(review_id: int, db: Session = Depends(get_db)):
     ]
 
     try:
-        decisions = screen_studies_with_ai(review_dict, studies_list) if studies_list else {}
+        decisions = screen_studies_with_ai(review_dict, studies_list, reasons) if studies_list else {}
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Error en cribado IA: {exc}")
 
@@ -432,6 +479,7 @@ def ai_screen_studies(review_id: int, db: Session = Depends(get_db)):
         kind = decision["decision"]
         study.screening_decision = kind if kind in ("include", "exclude") else "maybe"
         study.screening_stage = "title_abstract"
+        study.ai_screening_note = decision["reason"] or None
         if kind == "include":
             study.included = True
             study.exclusion_reason = None
@@ -442,15 +490,13 @@ def ai_screen_studies(review_id: int, db: Session = Depends(get_db)):
                 quantitative_count += 1
         elif kind == "exclude":
             study.included = False
-            study.exclusion_reason = f"{decision['criterion']}: {decision['reason']}"
+            study.exclusion_reason = _decision_reason(decision, bool(reasons))
             excluded_count += 1
         else:
             # Eligibility couldn't be verified from the available data: keep it out of the
             # pooled analysis until the author checks the full text and includes it manually.
             study.included = False
-            study.exclusion_reason = (
-                f"Requiere revisión a texto completo — {decision['criterion']}: {decision['reason']}"
-            )
+            study.exclusion_reason = _decision_reason(decision, bool(reasons))
             uncertain_count += 1
         study.screening_reviewed = True
 
@@ -533,7 +579,8 @@ def reset_screening(review_id: int, db: Session = Depends(get_db)):
         .update(
             {Study.included: True, Study.exclusion_reason: None, Study.screening_reviewed: False,
              Study.screening_decision: None, Study.screening_stage: None,
-             Study.analysis_suitability: None, Study.suitability_note: None},
+             Study.analysis_suitability: None, Study.suitability_note: None,
+             Study.ai_screening_note: None},
             synchronize_session=False,
         )
     )

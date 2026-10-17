@@ -84,6 +84,7 @@ class StudyBase(BaseModel):
     suitability_note: Optional[str] = None
     center_type: Optional[str] = None
     center_evidence: Optional[str] = None
+    ai_screening_note: Optional[str] = None
 
 
 class StudyCreate(StudyBase):

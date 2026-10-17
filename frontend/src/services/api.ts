@@ -147,6 +147,7 @@ export interface Study {
   suitability_note: string | null
   center_type: 'single' | 'multi' | 'unclear' | null
   center_evidence: string | null
+  ai_screening_note?: string | null
 }
 
 export interface SearchSource {
@@ -327,8 +328,22 @@ export const setScreeningDecision = (
     source_database?: string
   },
 ) => api.post<Study>(`/reviews/${reviewId}/references/${studyId}/decision`, data).then(r => r.data)
-export const aiScreenStudies = (reviewId: number) =>
-  api.post<{ message: string; included: number; excluded: number; uncertain: number; skipped_already_reviewed: number }>(`/reviews/${reviewId}/analysis/ai-screen`).then(r => r.data)
+export const aiScreenStudies = (reviewId: number, opts?: { reasons?: string[] }) =>
+  api.post<{ message: string; included: number; excluded: number; uncertain: number; skipped_already_reviewed: number }>(
+    `/reviews/${reviewId}/analysis/ai-screen`, opts ?? null,
+  ).then(r => r.data)
+
+export interface ScreeningSuggestion {
+  decision: 'include' | 'exclude' | 'maybe'
+  reason: string | null
+  explanation: string
+  suitability: 'quantitative' | 'narrative' | null
+  suitability_note: string | null
+}
+export const suggestScreening = (reviewId: number, studyId: number, reasons: string[]) =>
+  api.post<{ suggestions: Record<string, ScreeningSuggestion> }>(
+    `/reviews/${reviewId}/analysis/ai-screen`, { reasons, study_ids: [studyId], dry_run: true },
+  ).then(r => r.data.suggestions[String(studyId)])
 export const resetScreening = (reviewId: number) =>
   api.post<{ message: string; reset: number }>(`/reviews/${reviewId}/analysis/reset-screening`).then(r => r.data)
 export const aiExtractData = (reviewId: number) =>

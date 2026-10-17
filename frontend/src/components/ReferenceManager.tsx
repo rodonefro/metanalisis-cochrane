@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Library, ChevronDown, ChevronUp, Upload, Download, X, CheckCircle2, XCircle, HelpCircle,
-  RotateCcw, Search, ExternalLink, FileText, ListChecks,
+  RotateCcw, Search, ExternalLink, FileText, ListChecks, Wand2, Loader2,
 } from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  importReferences, exportReferences, setScreeningDecision, listSearches, getReview, updateReview,
-  type Study, type SearchSource,
+  importReferences, exportReferences, setScreeningDecision, listSearches, getReview, updateReview, aiScreenStudies, suggestScreening,
+  type Study, type SearchSource, type ScreeningSuggestion,
 } from '../services/api'
 import { exclusionReasonGroups, loadCustomReasons, parseCriteria } from './screeningReasons'
 
@@ -324,6 +324,9 @@ export function ScreeningModal({
   const [customReason, setCustomReason] = useState('')
   const [stage, setStage] = useState<'title_abstract' | 'full_text'>('title_abstract')
   const [saveReason, setSaveReason] = useState(true)
+  const [suggestion, setSuggestion] = useState<{ id: number; s: ScreeningSuggestion } | null>(null)
+  const [suggesting, setSuggesting] = useState(false)
+  const [bulkScreening, setBulkScreening] = useState(false)
   const [showCriteria, setShowCriteria] = useState(true)
   const qc = useQueryClient()
   const { data: review } = useQuery({ queryKey: ['review', reviewId], queryFn: () => getReview(reviewId) })
@@ -377,11 +380,54 @@ export function ScreeningModal({
     }
   }, [selected?.id])  // eslint-disable-line react-hooks/exhaustive-deps
 
+  const allReasons = useMemo(() => reasonGroups.flatMap(g => g.reasons), [reasonGroups])
+
+  const askAi = async () => {
+    if (!selected) return
+    setSuggesting(true)
+    try {
+      setSuggestion({ id: selected.id, s: await suggestScreening(reviewId, selected.id, allReasons) })
+    } catch (e: any) {
+      toast.error(e.response?.data?.detail || 'Error al pedir la sugerencia de la IA')
+    } finally {
+      setSuggesting(false)
+    }
+  }
+
+  const screenPendingWithAi = async () => {
+    const pending = studies.filter(s => decisionOf(s) === null).length
+    if (!pending) { toast('No hay registros pendientes de cribar.'); return }
+    if (!confirm(`¿Cribar con IA los ${pending} registros pendientes? La IA decide incluir / quizás / excluir con los motivos de tu lista; las decisiones ya tomadas no se modifican y después puedes revisarlas aquí.`)) return
+    setBulkScreening(true)
+    try {
+      const res = await aiScreenStudies(reviewId, { reasons: allReasons })
+      onChanged()
+      toast.success(res.message, { duration: 8000 })
+    } catch (e: any) {
+      toast.error(e.response?.data?.detail || 'Error en el cribado con IA')
+    } finally {
+      setBulkScreening(false)
+    }
+  }
+
   const decide = useMutation({
     mutationFn: (data: Parameters<typeof setScreeningDecision>[2]) => setScreeningDecision(reviewId, selected!.id, data),
     onSuccess: () => onChanged(),
     onError: (e: any) => toast.error(e.response?.data?.detail || 'Error al guardar la decisión'),
   })
+
+  const applySuggestion = (sug: ScreeningSuggestion) => {
+    if (!selected) return
+    decide.mutate({
+      decision: sug.decision,
+      stage,
+      reason: sug.decision === 'include' ? null : sug.reason,
+    })
+    if (sug.decision === 'exclude' && sug.reason) setReason(sug.reason)
+    setSuggestion(null)
+    if (filter !== 'pending') goNext()
+    else if (idx >= 0 && visible[idx + 1]) setSelectedId(visible[idx + 1].id)
+  }
 
   const goNext = () => {
     if (idx >= 0 && idx < visible.length - 1) setSelectedId(visible[idx + 1].id)
@@ -400,6 +446,7 @@ export function ScreeningModal({
       reason: decision === 'exclude' ? finalReason : decision === 'maybe' ? 'Requiere revisión a texto completo' : null,
     })
     if (decision === 'exclude' && reason === '__other' && saveReason) rememberReason(finalReason)
+    setSuggestion(null)
     // In the "pending" view the record leaves the list; elsewhere move on.
     if (filter !== 'pending') goNext()
     else if (idx >= 0 && visible[idx + 1]) setSelectedId(visible[idx + 1].id)
@@ -450,7 +497,17 @@ export function ScreeningModal({
               </button>
             ))}
           </div>
-          <div className="relative ml-auto">
+          <button
+            type="button"
+            onClick={screenPendingWithAi}
+            disabled={bulkScreening}
+            className="btn-secondary text-xs ml-auto"
+            title="Opcional: la IA decide todos los registros pendientes con los motivos de tu lista; luego puedes revisarlos"
+          >
+            {bulkScreening ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+            {bulkScreening ? 'Cribando con IA...' : 'Cribar pendientes con IA'}
+          </button>
+          <div className="relative">
             <Search size={14} className="absolute left-2 top-2 text-gray-400" />
             <input
               className="input text-xs pl-7 py-1.5 w-56"
@@ -606,6 +663,49 @@ export function ScreeningModal({
                     </ul>
                   </div>
                 )}
+
+                {selected.ai_screening_note && decisionOf(selected) && (
+                  <p className="text-xs text-gray-600 bg-cochrane-50 border border-cochrane-100 rounded-lg p-2">
+                    <span className="font-semibold text-cochrane-700">Nota del cribado IA:</span> {selected.ai_screening_note}
+                  </p>
+                )}
+
+                {/* Optional AI suggestion for this record */}
+                <div className="rounded-lg border border-dashed border-cochrane-300 p-3 space-y-2">
+                  <div className="flex items-center gap-2 flex-wrap">
+                    <button type="button" onClick={askAi} disabled={suggesting} className="btn-secondary text-xs">
+                      {suggesting ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+                      {suggesting ? 'Analizando con IA...' : 'Sugerencia IA'}
+                    </button>
+                    <span className="text-[11px] text-gray-400">
+                      Opcional: la IA revisa este registro con tus criterios y propone la decisión y el motivo; tú decides si aplicarla.
+                    </span>
+                  </div>
+                  {suggestion && suggestion.id === selected.id && (
+                    <div className={`rounded-lg border p-3 text-xs space-y-1 ${DECISION_STYLE[suggestion.s.decision]}`}>
+                      <p className="font-semibold">
+                        La IA sugiere: {DECISION_LABEL[suggestion.s.decision]}
+                        {suggestion.s.reason && suggestion.s.decision !== 'include' ? ` — ${suggestion.s.reason}` : ''}
+                      </p>
+                      <p className="text-gray-700">{suggestion.s.explanation}</p>
+                      {suggestion.s.suitability && (
+                        <p className="text-gray-600">
+                          Analizabilidad: {suggestion.s.suitability === 'quantitative' ? 'cuantitativo' : 'solo narrativo'}
+                          {suggestion.s.suitability_note ? ` — ${suggestion.s.suitability_note}` : ''}
+                        </p>
+                      )}
+                      <div className="flex gap-2 pt-1">
+                        <button type="button" onClick={() => applySuggestion(suggestion.s)} disabled={decide.isPending}
+                          className="btn-primary text-xs">
+                          Aplicar sugerencia
+                        </button>
+                        <button type="button" onClick={() => setSuggestion(null)} className="btn-secondary text-xs">
+                          Descartar
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
 
                 {/* Decision controls */}
                 <div className="rounded-lg border border-gray-200 p-4 space-y-3">
