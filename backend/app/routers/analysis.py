@@ -1,4 +1,5 @@
 import json
+from collections import Counter
 from datetime import datetime
 from fastapi import APIRouter, Body, Depends, HTTPException
 from pydantic import BaseModel
@@ -360,6 +361,11 @@ class ScreenRequest(BaseModel):
     reasons: list[str] | None = None      # the author's exclusion-reason list (Rayyan-style)
     study_ids: list[int] | None = None    # screen these records, even if already decided
     dry_run: bool = False                 # return suggestions without saving
+    limit: int | None = None              # pending records sent to the AI in this call (default: one lot)
+
+
+SCREEN_LOT_SIZE = 50
+_SCREEN_CALL_SIZE = 15
 
 
 def _decision_reason(decision: dict, with_options: bool) -> str | None:
@@ -382,6 +388,10 @@ def ai_screen_studies(review_id: int, payload: ScreenRequest | None = Body(None)
     or screened by a previous AI run) are skipped, so this never overwrites a
     selection that was already made — e.g. the final set of studies you curated
     to match the PRISMA flow diagram.
+
+    Only one lot of pending records (SCREEN_LOT_SIZE unless `limit` says otherwise)
+    is sent to the AI per call, and decisions are saved after every model call, so
+    credits are spent on a known number of records and an error keeps what was done.
     """
     review = db.query(Review).filter(Review.id == review_id).first()
     if not review:
@@ -389,7 +399,7 @@ def ai_screen_studies(review_id: int, payload: ScreenRequest | None = Body(None)
 
     payload = payload or ScreenRequest()
     reasons = [r.strip() for r in (payload.reasons or []) if r and r.strip()] or None
-    all_studies = db.query(Study).filter(Study.review_id == review_id).all()
+    all_studies = db.query(Study).filter(Study.review_id == review_id).order_by(Study.id).all()
     if not all_studies:
         raise HTTPException(status_code=422, detail="No hay estudios para cribar.")
 
@@ -408,8 +418,8 @@ def ai_screen_studies(review_id: int, payload: ScreenRequest | None = Body(None)
                 f"No hay estudios pendientes de cribar: los {already_reviewed} estudios "
                 "ya tienen una decisión de inclusión/exclusión (manual o de un cribado IA previo)."
             ),
-            "included": 0,
-            "excluded": 0,
+            "included": 0, "excluded": 0, "uncertain": 0, "quantitative": 0, "duplicates": 0,
+            "screened": 0, "remaining": 0,
             "skipped_already_reviewed": already_reviewed,
         }
 
@@ -457,65 +467,70 @@ def ai_screen_studies(review_id: int, payload: ScreenRequest | None = Body(None)
             f"'{_short_label(original.study_label or original.title or str(original.id))}'"
         )
     pending_studies = [s for s in pending_studies if s.id not in duplicates]
-
-    studies_list = [
-        {c.name: getattr(s, c.name) for c in s.__table__.columns}
-        for s in pending_studies
-    ]
-
-    try:
-        decisions = screen_studies_with_ai(review_dict, studies_list, reasons) if studies_list else {}
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Error en cribado IA: {exc}")
-
-    included_count = 0
-    quantitative_count = 0
-    excluded_count = 0
-    uncertain_count = 0
-    for study in pending_studies:
-        decision = decisions.get(study.id)
-        if decision is None:
-            continue
-        kind = decision["decision"]
-        study.screening_decision = kind if kind in ("include", "exclude") else "maybe"
-        study.screening_stage = "title_abstract"
-        study.ai_screening_note = decision["reason"] or None
-        if kind == "include":
-            study.included = True
-            study.exclusion_reason = None
-            study.analysis_suitability = None if decision["suitability"] == "not_applicable" else decision["suitability"]
-            study.suitability_note = decision["suitability_note"] or None
-            included_count += 1
-            if study.analysis_suitability == "quantitative":
-                quantitative_count += 1
-        elif kind == "exclude":
-            study.included = False
-            study.exclusion_reason = _decision_reason(decision, bool(reasons))
-            excluded_count += 1
-        else:
-            # Eligibility couldn't be verified from the available data: keep it out of the
-            # pooled analysis until the author checks the full text and includes it manually.
-            study.included = False
-            study.exclusion_reason = _decision_reason(decision, bool(reasons))
-            uncertain_count += 1
-        study.screening_reviewed = True
-
     db.commit()
-    no_decision = len(pending_studies) - included_count - excluded_count - uncertain_count
+    if not payload.study_ids:
+        pending_studies = pending_studies[:max(1, min(payload.limit or SCREEN_LOT_SIZE, 500))]
+
+    counts: Counter = Counter()
+    error = None
+    for i in range(0, len(pending_studies), _SCREEN_CALL_SIZE):
+        chunk = pending_studies[i:i + _SCREEN_CALL_SIZE]
+        try:
+            decisions = screen_studies_with_ai(
+                review_dict, [{c.name: getattr(s, c.name) for c in s.__table__.columns} for s in chunk], reasons)
+        except Exception as exc:
+            error = exc
+            break
+        for study in chunk:
+            decision = decisions.get(study.id)
+            if decision is None:
+                continue
+            kind = decision["decision"]
+            study.screening_decision = kind if kind in ("include", "exclude") else "maybe"
+            study.screening_stage = "title_abstract"
+            study.ai_screening_note = decision["reason"] or None
+            if kind == "include":
+                study.included = True
+                study.exclusion_reason = None
+                study.analysis_suitability = None if decision["suitability"] == "not_applicable" else decision["suitability"]
+                study.suitability_note = decision["suitability_note"] or None
+                counts["included"] += 1
+                if study.analysis_suitability == "quantitative":
+                    counts["quantitative"] += 1
+            elif kind == "exclude":
+                study.included = False
+                study.exclusion_reason = _decision_reason(decision, bool(reasons))
+                counts["excluded"] += 1
+            else:
+                # Eligibility couldn't be verified from the available data: keep it out of the
+                # pooled analysis until the author checks the full text and includes it manually.
+                study.included = False
+                study.exclusion_reason = _decision_reason(decision, bool(reasons))
+                counts["uncertain"] += 1
+            study.screening_reviewed = True
+        db.commit()
+
+    screened = counts["included"] + counts["excluded"] + counts["uncertain"]
+    if error is not None and not screened:
+        raise HTTPException(status_code=500, detail=f"Error en cribado IA: {error}")
+    remaining = db.query(Study).filter(Study.review_id == review_id,
+                                       Study.screening_reviewed == False).count()  # noqa: E712
     return {
         "message": (
-            f"Cribado completado: {included_count} incluidos ({quantitative_count} con datos "
-            f"cuantitativos para el metaanálisis, {included_count - quantitative_count} solo narrativos), "
-            f"{excluded_count} excluidos, "
-            + (f"{len(duplicates)} duplicados, " if duplicates else "")
-            + f"{uncertain_count} requieren revisión a texto completo"
-            + (f", {no_decision} sin decisión (quedan pendientes)" if no_decision else "")
-            + f" ({already_reviewed} ya tenían decisión previa y no se modificaron)"
+            f"Lote cribado: {screened} estudios — {counts['included']} incluidos "
+            f"({counts['quantitative']} con datos cuantitativos para el metaanálisis), "
+            f"{counts['excluded']} excluidos, {counts['uncertain']} requieren revisión a texto completo"
+            + (f"; {len(duplicates)} duplicados excluidos sin usar IA" if duplicates else "")
+            + (f". El lote se interrumpió por un error ({error}); lo cribado quedó guardado" if error else "")
+            + (f". Quedan {remaining} pendientes." if remaining else ". No quedan estudios pendientes.")
         ),
-        "included": included_count,
-        "excluded": excluded_count,
-        "uncertain": uncertain_count,
-        "quantitative": quantitative_count,
+        "included": counts["included"],
+        "excluded": counts["excluded"],
+        "uncertain": counts["uncertain"],
+        "quantitative": counts["quantitative"],
+        "duplicates": len(duplicates),
+        "screened": screened,
+        "remaining": remaining,
         "skipped_already_reviewed": already_reviewed,
     }
 

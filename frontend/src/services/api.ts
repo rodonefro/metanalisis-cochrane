@@ -328,9 +328,14 @@ export const setScreeningDecision = (
     source_database?: string
   },
 ) => api.post<Study>(`/reviews/${reviewId}/references/${studyId}/decision`, data).then(r => r.data)
-export const aiScreenStudies = (reviewId: number, opts?: { reasons?: string[] }) =>
-  api.post<{ message: string; included: number; excluded: number; uncertain: number; skipped_already_reviewed: number }>(
-    `/reviews/${reviewId}/analysis/ai-screen`, opts ?? null,
+// Pending records sent to the AI per screening call (keeps credit use per click predictable).
+export const SCREEN_LOT_SIZE = 50
+export const aiScreenStudies = (reviewId: number, opts?: { reasons?: string[]; limit?: number }) =>
+  api.post<{
+    message: string; included: number; excluded: number; uncertain: number; quantitative: number
+    duplicates: number; screened: number; remaining: number; skipped_already_reviewed: number
+  }>(
+    `/reviews/${reviewId}/analysis/ai-screen`, { limit: SCREEN_LOT_SIZE, ...opts },
   ).then(r => r.data)
 
 export interface ScreeningSuggestion {

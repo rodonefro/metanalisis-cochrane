@@ -3,7 +3,7 @@ import { Upload, Plus, Trash2, ChevronDown, ChevronUp, Database, Download, Merge
 import toast from 'react-hot-toast'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  deleteStudy, uploadStudies, createStudy, mergeStudyDatabases, downloadStudies, aiScreenStudies, aiExtractData, updateStudy, resetScreening, aiAssessRob, listSearches, API_BASE,
+  deleteStudy, uploadStudies, createStudy, mergeStudyDatabases, downloadStudies, aiScreenStudies, SCREEN_LOT_SIZE, aiExtractData, updateStudy, resetScreening, aiAssessRob, listSearches, API_BASE,
   type Study, type ExtractionReportItem, type ImportRole,
 } from '../services/api'
 import StudiesDatabaseModal from './StudiesDatabaseModal'
@@ -107,10 +107,13 @@ export default function StudiesTable({ reviewId, studies, showCenters = false }:
   const screenMutation = useMutation({
     mutationFn: () => aiScreenStudies(reviewId),
     onSuccess: (res) => {
-      toast.success(res.message)
+      toast.success(res.message, { duration: 9000 })
       invalidate()
     },
-    onError: (e: any) => toast.error(e.response?.data?.detail || 'Error en cribado IA'),
+    onError: (e: any) => {
+      invalidate()
+      toast.error(e.response?.data?.detail || 'Error en cribado IA')
+    },
   })
 
   const repeatMutation = useMutation({
@@ -126,7 +129,7 @@ export default function StudiesTable({ reviewId, studies, showCenters = false }:
       invalidate()
       toast.error(
         (e.response?.data?.detail || 'Error al repetir el cribado') +
-        ' — los estudios quedaron pendientes; pulsa «Cribar con IA» para reintentar.',
+        ' — los estudios quedaron pendientes; pulsa «Cribar siguientes» para continuar por lotes.',
       )
     },
   })
@@ -139,11 +142,15 @@ export default function StudiesTable({ reviewId, studies, showCenters = false }:
     enabled: manualOpen,
   })
 
+  const pendingCount = studies.filter(s => !s.screening_reviewed).length
+  const nextLot = Math.min(SCREEN_LOT_SIZE, pendingCount)
+
   const confirmRepeat = () => {
     if (confirm(
-      '¿Repetir el cribado con IA? Se borrarán TODAS las decisiones actuales de inclusión/exclusión ' +
-      '(las de la IA y las que marcaste manualmente) y la IA volverá a cribar todos los estudios con ' +
-      'los criterios actuales. Puede tardar varios minutos.'
+      `¿Repetir el cribado con IA? Se borrarán TODAS las decisiones actuales de inclusión/exclusión ` +
+      `de los ${studies.length} estudios (las de la IA y las manuales). Después la IA cribará solo los ` +
+      `primeros ${Math.min(SCREEN_LOT_SIZE, studies.length)} y podrás continuar por lotes de ${SCREEN_LOT_SIZE}. ` +
+      `Volver a cribarlos todos consume créditos de IA por cada estudio.`
     ))
       repeatMutation.mutate()
   }
@@ -389,20 +396,22 @@ export default function StudiesTable({ reviewId, studies, showCenters = false }:
               <button
                 type="button"
                 onClick={() => {
-                  const pending = studies.filter(s => !s.screening_reviewed).length
-                  if (pending === 0) {
-                    confirmRepeat()
-                  } else if (confirm(
-                    `¿Cribar ${pending} estudio(s) pendiente(s) con IA según los criterios? Los estudios que ya tienen una decisión no se tocarán (usa «Repetir cribado» para volver a cribarlos todos). Esto puede tardar 1-2 minutos.`
+                  if (confirm(
+                    `¿Cribar los siguientes ${nextLot} de ${pendingCount} estudio(s) pendiente(s) con IA? ` +
+                    `Solo esos ${nextLot} se envían a la IA; los que ya tienen decisión no se tocan ni se vuelven a cobrar.`
                   ))
                     screenMutation.mutate()
                 }}
-                disabled={screening || extractMutation.isPending}
+                disabled={screening || extractMutation.isPending || pendingCount === 0}
                 className="btn-primary text-xs"
-                title="La IA analiza título, resumen y diseño de cada estudio pendiente y decide inclusión/exclusión según el PICO. No modifica estudios que ya tienen una decisión."
+                title={`La IA criba los estudios pendientes por lotes de ${SCREEN_LOT_SIZE} según el PICO; cada lote se guarda al terminar. No modifica estudios que ya tienen una decisión.`}
               >
                 <Wand2 size={14} className={screenMutation.isPending ? 'animate-spin' : ''} />
-                {screenMutation.isPending ? 'Cribando con IA...' : 'Cribar con IA'}
+                {screenMutation.isPending
+                  ? `Cribando ${nextLot} con IA...`
+                  : pendingCount === 0
+                  ? 'Cribado completo'
+                  : `Cribar siguientes ${nextLot} con IA (quedan ${pendingCount})`}
               </button>
               <button
                 type="button"

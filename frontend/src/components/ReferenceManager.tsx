@@ -6,7 +6,7 @@ import {
 import toast from 'react-hot-toast'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  importReferences, exportReferences, setScreeningDecision, listSearches, getReview, updateReview, aiScreenStudies, suggestScreening,
+  importReferences, exportReferences, setScreeningDecision, listSearches, getReview, updateReview, aiScreenStudies, SCREEN_LOT_SIZE, suggestScreening,
   type Study, type SearchSource, type ScreeningSuggestion,
 } from '../services/api'
 import { exclusionReasonGroups, loadCustomReasons, parseCriteria } from './screeningReasons'
@@ -397,7 +397,8 @@ export function ScreeningModal({
   const screenPendingWithAi = async () => {
     const pending = studies.filter(s => decisionOf(s) === null).length
     if (!pending) { toast('No hay registros pendientes de cribar.'); return }
-    if (!confirm(`¿Cribar con IA los ${pending} registros pendientes? La IA decide incluir / quizás / excluir con los motivos de tu lista; las decisiones ya tomadas no se modifican y después puedes revisarlas aquí.`)) return
+    const lot = Math.min(SCREEN_LOT_SIZE, pending)
+    if (!confirm(`¿Cribar con IA los siguientes ${lot} de ${pending} registros pendientes? La IA decide incluir / quizás / excluir con los motivos de tu lista; solo esos ${lot} se envían a la IA, las decisiones ya tomadas no se modifican y después puedes revisarlas aquí.`)) return
     setBulkScreening(true)
     try {
       const res = await aiScreenStudies(reviewId, { reasons: allReasons })
