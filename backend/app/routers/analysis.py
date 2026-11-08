@@ -1,3 +1,4 @@
+import hashlib
 import json
 from collections import Counter
 from datetime import datetime
@@ -204,6 +205,37 @@ def _get_latest_or_404(review_id: int, db: Session):
     return analysis
 
 
+def _cached_interpretation(db: Session, analysis: Analysis | None, plot: str, inputs, generate) -> str:
+    """AI interpretation of a plot, stored on the analysis and reused while the data it is
+    based on is unchanged, so reopening a plot doesn't call the AI again. Non-fatal: "" on error."""
+    key = hashlib.sha256(json.dumps(inputs, sort_keys=True, default=str).encode()).hexdigest()
+    try:
+        store = json.loads(analysis.interpretations_json or "{}") if analysis else {}
+    except ValueError:
+        store = {}
+    cached = store.get(plot)
+    if cached and cached.get("key") == key and cached.get("text"):
+        return cached["text"]
+    try:
+        text = generate()
+    except Exception:
+        return ""
+    if analysis and text:
+        store[plot] = {"key": key, "text": text}
+        analysis.interpretations_json = json.dumps(store, ensure_ascii=False)
+        db.commit()
+    return text
+
+
+def _review_inputs(review: Review) -> list:
+    """The review fields the interpretation prompts use."""
+    return [review.title, review.population, review.intervention, review.effect_measure]
+
+
+def _rob_inputs(studies: list[dict]) -> list:
+    return [[s.get(k) for k in ROB_DOMAIN_KEYS] for s in studies]
+
+
 @router.get("/forest")
 def get_forest_plot(review_id: int, subset: str | None = None, db: Session = Depends(get_db)):
     """Return (or regenerate) the forest plot + AI interpretation.
@@ -234,13 +266,12 @@ def get_forest_plot(review_id: int, subset: str | None = None, db: Session = Dep
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Error generating forest plot: {exc}")
 
-    # AI interpretation (always fresh, non-fatal)
-    interpretation = ""
-    try:
-        review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
-        interpretation = interpret_forest_plot(review_dict, result_dict)
-    except Exception:
-        pass
+    review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
+    interpretation = _cached_interpretation(
+        db, analysis, "forest_multicenter" if subset == "multicenter" else "forest",
+        [_review_inputs(review), result_dict],
+        lambda: interpret_forest_plot(review_dict, result_dict),
+    )
 
     return {"forest_b64": b64, "interpretation": interpretation}
 
@@ -264,12 +295,11 @@ def get_funnel_plot(review_id: int, db: Session = Depends(get_db)):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Error generating funnel plot: {exc}")
 
-    interpretation = ""
-    try:
-        review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
-        interpretation = interpret_funnel_plot(review_dict, result_dict)
-    except Exception:
-        pass
+    review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
+    interpretation = _cached_interpretation(
+        db, analysis, "funnel", [_review_inputs(review), result_dict],
+        lambda: interpret_funnel_plot(review_dict, result_dict),
+    )
 
     return {"funnel_b64": b64, "interpretation": interpretation}
 
@@ -289,12 +319,11 @@ def get_grade_table(review_id: int, db: Session = Depends(get_db)):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Error generating GRADE table: {exc}")
 
-    interpretation = ""
-    try:
-        review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
-        interpretation = interpret_grade_table(review_dict, result_dict, studies)
-    except Exception:
-        pass
+    review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
+    interpretation = _cached_interpretation(
+        db, analysis, "grade", [_review_inputs(review), result_dict, _rob_inputs(studies)],
+        lambda: interpret_grade_table(review_dict, result_dict, studies),
+    )
 
     return {"grade_b64": b64, "interpretation": interpretation}
 
@@ -324,12 +353,11 @@ def get_rob_plot(review_id: int, db: Session = Depends(get_db)):
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Error generando el gráfico de riesgo de sesgo: {exc}")
 
-    interpretation = ""
-    try:
-        review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
-        interpretation = interpret_rob_plot(review_dict, studies)
-    except Exception:
-        pass
+    review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
+    interpretation = _cached_interpretation(
+        db, analysis, "rob", [_review_inputs(review), _rob_inputs(studies)],
+        lambda: interpret_rob_plot(review_dict, studies),
+    )
 
     return {"rob_b64": b64, "interpretation": interpretation}
 

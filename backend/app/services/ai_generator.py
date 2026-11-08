@@ -17,6 +17,16 @@ def _get_client() -> anthropic.Anthropic:
     return _client
 
 
+def _batch_messages(instructions: str, studies_text: str) -> list[dict]:
+    """User turn for a batched call: the instructions (identical for every batch) are a cached
+    prefix, so from the second batch on they are billed at the cache-read rate; only the
+    batch's studies are new input."""
+    return [{"role": "user", "content": [
+        {"type": "text", "text": instructions, "cache_control": {"type": "ephemeral"}},
+        {"type": "text", "text": studies_text},
+    ]}]
+
+
 def _study_summary(studies: list[dict]) -> str:
     if not studies:
         return "No studies provided."
@@ -625,13 +635,11 @@ def screen_studies_with_ai(review: dict, studies: list[dict], reason_options: li
                     entry[field] = value
             payload.append(entry)
 
-        user = (
+        instructions = (
             f"REVISIÓN SISTEMÁTICA: {title}\n\n"
             "CRITERIOS DE ELEGIBILIDAD DEFINIDOS POR EL AUTOR (aplícalos tal cual):\n"
             f"{criteria}\n\n"
-            "ESTUDIOS A EVALUAR (JSON; cada campo proviene de la base de datos del autor):\n"
-            f"{json.dumps(payload, ensure_ascii=False, indent=1)}\n\n"
-            "Para CADA estudio, verifica uno por uno todos los criterios de inclusión y todos los "
+            "Para CADA estudio de la lista que sigue, verifica uno por uno todos los criterios de inclusión y todos los "
             "criterios de exclusión anteriores, y asigna una decisión:\n"
             "- \"include\": la información disponible muestra que cumple TODOS los criterios de "
             "inclusión y NO cumple ningún criterio de exclusión.\n"
@@ -671,17 +679,21 @@ def screen_studies_with_ai(review: dict, studies: list[dict], reason_options: li
             "en una o dos frases, la evidencia del estudio que sustenta la decisión. "
             "Devuelve exactamente una decisión por cada id recibido."
         )
+        studies_text = (
+            "ESTUDIOS A EVALUAR (JSON; cada campo proviene de la base de datos del autor):\n"
+            f"{json.dumps(payload, ensure_ascii=False, indent=1)}"
+        )
 
         with client.messages.stream(
             model="claude-opus-5",
             max_tokens=64000,
             thinking={"type": "adaptive"},
             output_config={
-                "effort": "high",
+                "effort": "medium",
                 "format": {"type": "json_schema", "schema": schema},
             },
             system=_SCREEN_SYSTEM,
-            messages=[{"role": "user", "content": user}],
+            messages=_batch_messages(instructions, studies_text),
         ) as stream:
             message = stream.get_final_message()
 
@@ -874,12 +886,11 @@ def assess_risk_of_bias(review: dict, studies: list[dict]) -> dict:
                     entry[field] = value
             payload.append(entry)
 
-        user = (
+        instructions = (
             f"REVISIÓN SISTEMÁTICA: {review.get('title') or ''}\n"
             f"Desenlaces de interés: {review.get('outcomes') or ''}\n\n"
-            "Evalúa el riesgo de sesgo de cada estudio en los 7 dominios de la herramienta Cochrane:\n"
-            f"{domain_guide}\n\n"
-            f"ESTUDIOS (JSON):\n{json.dumps(payload, ensure_ascii=False, indent=1)}\n\n"
+            "Evalúa el riesgo de sesgo de cada estudio de la lista que sigue en los 7 dominios de "
+            f"la herramienta Cochrane:\n{domain_guide}\n\n"
             "Reglas:\n"
             "1. Juzga ÚNICAMENTE con la información proporcionada de cada estudio; no uses "
             "conocimiento externo sobre el artículo.\n"
@@ -898,17 +909,18 @@ def assess_risk_of_bias(review: dict, studies: list[dict]) -> dict:
             "evidencia usada o indicando que no se reporta.\n"
             "Devuelve exactamente una evaluación por cada id recibido."
         )
+        studies_text = f"ESTUDIOS (JSON):\n{json.dumps(payload, ensure_ascii=False, indent=1)}"
 
         with client.messages.stream(
             model="claude-opus-5",
             max_tokens=64000,
             thinking={"type": "adaptive"},
             output_config={
-                "effort": "high",
+                "effort": "medium",
                 "format": {"type": "json_schema", "schema": _ROB_SCHEMA},
             },
             system=_SCREEN_SYSTEM,
-            messages=[{"role": "user", "content": user}],
+            messages=_batch_messages(instructions, studies_text),
         ) as stream:
             message = stream.get_final_message()
 
@@ -955,6 +967,13 @@ _CENTER_SCHEMA = {
 }
 
 
+# Only the fields that describe where participants were recruited.
+_CENTER_FIELDS = [
+    "study_label", "title", "country", "setting", "patient_population", "methods_used",
+    "abstract_text",
+]
+
+
 def classify_center_type(studies: list[dict]) -> dict:
     """Single-centre vs multicentre for each study, from its stored text only.
     Returns {study_id: {"center_type": "single"|"multi"|"unclear", "evidence": str}}."""
@@ -967,13 +986,13 @@ def classify_center_type(studies: list[dict]) -> dict:
         payload = []
         for s in batch:
             entry = {"id": s["id"]}
-            for field in _SCREEN_STUDY_FIELDS:
+            for field in _CENTER_FIELDS:
                 value = s.get(field)
                 if value not in (None, ""):
                     entry[field] = value
             payload.append(entry)
-        user = (
-            "Clasifica cada estudio según el número de centros donde se reclutaron los participantes:\n"
+        instructions = (
+            "Clasifica cada estudio de la lista que sigue según el número de centros donde se reclutaron los participantes:\n"
             "- \"single\" (unicéntrico): un solo hospital, unidad o centro (p. ej., «single-centre», "
             "«at Kenyatta National Hospital», «in our NICU»).\n"
             "- \"multi\" (multicéntrico): dos o más hospitales o centros, redes, registros o bases de "
@@ -981,17 +1000,17 @@ def classify_center_type(studies: list[dict]) -> dict:
             "«national registry»).\n"
             "- \"unclear\": la información no permite saberlo. No adivines.\n"
             "Usa ÚNICAMENTE la información proporcionada. En \"evidence\" copia el fragmento del texto que "
-            "lo sustenta, o explica brevemente en español por qué no se puede determinar.\n\n"
-            f"ESTUDIOS (JSON):\n{json.dumps(payload, ensure_ascii=False, indent=1)}\n\n"
+            "lo sustenta, o explica brevemente en español por qué no se puede determinar.\n"
             "Devuelve exactamente una entrada por cada id recibido."
         )
+        studies_text = f"ESTUDIOS (JSON):\n{json.dumps(payload, ensure_ascii=False, indent=1)}"
         with client.messages.stream(
-            model="claude-opus-5",
+            model="claude-haiku-5-5",
             max_tokens=32000,
             thinking={"type": "adaptive"},
             output_config={"effort": "medium", "format": {"type": "json_schema", "schema": _CENTER_SCHEMA}},
             system=_SCREEN_SYSTEM,
-            messages=[{"role": "user", "content": user}],
+            messages=_batch_messages(instructions, studies_text),
         ) as stream:
             message = stream.get_final_message()
         if message.stop_reason == "refusal":
@@ -1051,7 +1070,7 @@ def extract_quantitative_data(review: dict, studies: list[dict]) -> dict:
                 "textos": texts,
             })
 
-        user = (
+        instructions = (
             f"REVISIÓN: {review.get('title', '')}\n"
             f"MEDIDA DE EFECTO: {effect_measure}\n"
             f"DESENLACE A EXTRAER (definido por el autor): {outcome or 'desenlace principal de la revisión'}\n"
@@ -1088,9 +1107,9 @@ def extract_quantitative_data(review: dict, studies: list[dict]) -> dict:
             "momentos de seguimiento, usa el principal declarado "
             "y escribe cuál en \"outcome_reported\".\n"
             "4. No asignes un grupo a intervención o control si el texto no permite saberlo.\n\n"
-            f"ESTUDIOS (JSON):\n{json.dumps(payload, ensure_ascii=False, indent=1)}\n\n"
-            "Devuelve una entrada por cada id recibido."
+            "Devuelve una entrada por cada id de la lista que sigue."
         )
+        studies_text = f"ESTUDIOS (JSON):\n{json.dumps(payload, ensure_ascii=False, indent=1)}"
 
         with client.messages.stream(
             model="claude-opus-5-5",
@@ -1101,7 +1120,7 @@ def extract_quantitative_data(review: dict, studies: list[dict]) -> dict:
                 "format": {"type": "json_schema", "schema": schema},
             },
             system=_EXTRACT_SYSTEM,
-            messages=[{"role": "user", "content": user}],
+            messages=_batch_messages(instructions, studies_text),
         ) as stream:
             message = stream.get_final_message()
 

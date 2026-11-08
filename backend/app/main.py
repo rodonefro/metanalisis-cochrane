@@ -106,6 +106,10 @@ def _migrate_db():
             for col, typ in new_search_cols:
                 if col not in existing_search:
                     conn.execute(sa.text(f"ALTER TABLE search_databases ADD COLUMN {col} {typ}"))
+        if inspector.has_table("analyses"):
+            existing_analysis = {col["name"] for col in inspector.get_columns("analyses")}
+            if "interpretations_json" not in existing_analysis:
+                conn.execute(sa.text("ALTER TABLE analyses ADD COLUMN interpretations_json TEXT"))
         if adding_screening_reviewed:
             # Studies that already existed before this column was introduced were
             # already curated by hand (or by an earlier AI screen run). Mark them

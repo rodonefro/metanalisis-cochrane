@@ -238,6 +238,8 @@ class Analysis(Base):
     forest_plot_b64 = Column(Text, nullable=True)   # base64-encoded PNG
     funnel_plot_b64 = Column(Text, nullable=True)   # base64-encoded PNG
     rob_plot_b64 = Column(Text, nullable=True)      # base64-encoded PNG
+    # {plot: {"key": hash of the inputs, "text": AI interpretation}} — reused while inputs are unchanged
+    interpretations_json = Column(Text, nullable=True)
 
     review = relationship("Review", back_populates="analyses")
 
