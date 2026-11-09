@@ -24,7 +24,7 @@ const KNOWN_SOURCES = [
 type Decision = 'include' | 'exclude' | 'maybe' | null
 type Filter = 'all' | 'pending' | 'include' | 'exclude' | 'maybe' | 'not_retrieved'
 
-function decisionOf(s: Study): Decision {
+export function decisionOf(s: Study): Decision {
   if (s.screening_decision) return s.screening_decision
   if (!s.screening_reviewed) return null
   if (s.included) return 'include'

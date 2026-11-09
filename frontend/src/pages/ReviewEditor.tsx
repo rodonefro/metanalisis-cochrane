@@ -12,6 +12,7 @@ import ReferencesSection from '../components/ReferencesSection'
 import ProsperoPanel from '../components/ProsperoPanel'
 import MetaTypeToggle, { withObservationalTypes } from '../components/MetaTypeToggle'
 import ReferenceManager from '../components/ReferenceManager'
+import FullTextPanel from '../components/FullTextPanel'
 
 const SECTIONS = [
   { key: 'abstract', title: 'Resumen (Abstract)' },
@@ -445,6 +446,11 @@ export default function ReviewEditor() {
       {/* Reference manager (Rayyan / Zotero) */}
       <div className="mb-4">
         <ReferenceManager reviewId={reviewId} studies={review.studies || []} />
+      </div>
+
+      {/* Full-text retrieval for records the AI could not decide from title/abstract */}
+      <div className="mb-4">
+        <FullTextPanel reviewId={reviewId} studies={review.studies || []} />
       </div>
 
       {/* Studies */}
