@@ -717,7 +717,74 @@ def screen_studies_with_ai(review: dict, studies: list[dict], reason_options: li
     return results
 
 
+def screen_full_text_with_ai(review: dict, study: dict, reasons: list[str] | None = None) -> dict:
+    """
+    Full-text eligibility decision for one record whose title/abstract left a criterion
+    unverifiable. Same output as screen_studies_with_ai for that record.
+    """
+    import json
+
+    schema = _screen_schema(reasons)
+    if reasons:
+        options = "\n".join(f"- {r}" for r in schema["properties"]["decisions"]["items"]["properties"]["criterion"]["enum"][1:])
+        criterion_rule = (f"En \"criterion\" elige EXACTAMENTE una opción de la lista de motivos del autor; para "
+                          f"\"include\" usa \"{INCLUDE_OPTION}\".\nLISTA DE MOTIVOS DEL AUTOR:\n{options}\n")
+    else:
+        criterion_rule = ("En \"criterion\" escribe el criterio concreto que determinó la decisión (para "
+                          "\"include\", \"Cumple todos los criterios\").\n")
+    instructions = (
+        f"REVISIÓN SISTEMÁTICA: {review.get('title') or 'Revisión sistemática'}\n\n"
+        "CRITERIOS DE ELEGIBILIDAD DEFINIDOS POR EL AUTOR (aplícalos tal cual):\n"
+        f"{eligibility_block(review)}\n\n"
+        "Evalúa a TEXTO COMPLETO el estudio que sigue. En el cribado por título y resumen no se pudo "
+        "verificar al menos un criterio (indicado en \"criterio_pendiente\"). Lee el texto completo y verifica "
+        "todos los criterios de inclusión y exclusión:\n"
+        "- \"include\": el texto muestra que cumple TODOS los criterios de inclusión y ninguno de exclusión.\n"
+        "- \"exclude\": el texto muestra que incumple al menos un criterio.\n"
+        "- \"uncertain\": solo si ni el texto completo reporta la información necesaria (habría que contactar "
+        "a los autores).\n"
+        "No uses conocimiento externo sobre el estudio ni agregues criterios que el autor no definió.\n"
+        "Analizabilidad (solo para \"include\"): \"quantitative\" si el texto escribe, para los grupos que "
+        "compara la revisión, los números de al menos un desenlace (eventos y total, o media, DE y n, o un "
+        "efecto con IC 95 %"
+        + ("; en un metaanálisis de PROPORCIONES basta el número con el desenlace y el total de la cohorte"
+           if (review.get("effect_measure") or "").upper() == "PROP" else "")
+        + "); si no, \"narrative\". Para \"exclude\" e \"uncertain\" usa \"not_applicable\". En "
+        "\"suitability_note\" indica qué datos aporta y en qué tabla o sección están.\n"
+        + criterion_rule +
+        "En \"reason\" explica en español, en una o dos frases, la evidencia del texto completo (cita la "
+        "sección) que sustenta la decisión. Devuelve exactamente una decisión, con el id recibido."
+    )
+    payload = {
+        "id": study["id"],
+        "estudio": study.get("study_label") or study.get("authors"),
+        "titulo": study.get("title"),
+        "criterio_pendiente": study.get("exclusion_reason"),
+        "texto_completo": study.get("full_text"),
+    }
+    with _get_client().messages.stream(
+        model="claude-opus-5",
+        max_tokens=16000,
+        thinking={"type": "adaptive"},
+        output_config={"effort": "medium", "format": {"type": "json_schema", "schema": schema}},
+        system=_SCREEN_SYSTEM,
+        messages=_batch_messages(instructions, "ESTUDIO (JSON):\n" + json.dumps(payload, ensure_ascii=False)),
+    ) as stream:
+        message = stream.get_final_message()
+    if message.stop_reason == "refusal":
+        raise RuntimeError("El modelo declinó evaluar este estudio.")
+    if message.stop_reason == "max_tokens":
+        raise RuntimeError("La respuesta quedó truncada; reintenta.")
+    text = next(b.text for b in message.content if b.type == "text")
+    for d in json.loads(text)["decisions"]:
+        if d["id"] == study["id"]:
+            return {"decision": d["decision"], "criterion": d["criterion"].strip(), "reason": d["reason"].strip(),
+                    "suitability": d["suitability"], "suitability_note": d["suitability_note"].strip()}
+    raise RuntimeError("La IA no devolvió una decisión para este estudio.")
+
+
 _EXTRACT_SOURCE_FIELDS = [
+    ("full_text", "Texto completo"),
     ("abstract_text", "Resumen"),
     ("study_results", "Resultados"),
     ("patient_population", "Población"),
@@ -880,7 +947,10 @@ def assess_risk_of_bias(review: dict, studies: list[dict]) -> dict:
         payload = []
         for s in batch:
             entry = {"id": s["id"]}
-            for field in _SCREEN_STUDY_FIELDS:
+            # With the full text, it replaces the abstract-level fields it already contains.
+            fields = (("study_label", "title", "study_design", "full_text") if s.get("full_text")
+                      else _SCREEN_STUDY_FIELDS)
+            for field in fields:
                 value = s.get(field)
                 if value not in (None, ""):
                     entry[field] = value

@@ -10,6 +10,7 @@ from ..database import get_db
 from ..models import Review, Study
 from ..schemas import StudyCreate, StudyUpdate, StudyOut
 from ..services.file_parser import parse_file
+from ..services.fulltext import extract_pdf_text, match_study
 from ..services.references import detect_format, parse_references
 from .references import import_records
 
@@ -38,7 +39,7 @@ def download_studies(review_id: int, fmt: str = Query("xlsx", pattern="^(xlsx|cs
     """Whole study database of the review, one column per field (re-importable)."""
     review = _get_review_or_404(review_id, db)
     studies = db.query(Study).filter(Study.review_id == review_id).order_by(Study.id).all()
-    cols = [c.name for c in Study.__table__.columns if c.name != "review_id"]
+    cols = [c.name for c in Study.__table__.columns if c.name not in ("review_id", "full_text")]
     df = pd.DataFrame([{c: getattr(s, c) for c in cols} for s in studies], columns=cols)
 
     buf = io.BytesIO()
@@ -162,6 +163,65 @@ async def upload_merge_studies(
     if errors:
         result["errors"] = errors
     return result
+
+
+def _store_full_text(study: Study, text: str, filename: str):
+    study.full_text = text
+    study.full_text_filename = filename[:300]
+    study.full_text_status = "retrieved"
+    if study.screening_decision == "maybe" and study.screening_stage == "full_text":
+        # A new PDF for a record still undecided: let the AI read it again.
+        study.screening_stage = "title_abstract"
+
+
+async def _read_pdf(file: UploadFile) -> str:
+    if not (file.filename or "").lower().endswith(".pdf"):
+        raise HTTPException(status_code=422, detail=f"{file.filename}: solo se aceptan archivos PDF.")
+    try:
+        return extract_pdf_text(await file.read())
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=f"{file.filename}: {exc}")
+
+
+@router.post("/fulltext-match")
+async def upload_full_text_matched(review_id: int, file: UploadFile = File(...), db: Session = Depends(get_db)):
+    """Upload one PDF and attach it to the record it belongs to (by DOI, PMID or title)."""
+    _get_review_or_404(review_id, db)
+    text = await _read_pdf(file)
+    studies = db.query(Study).filter(Study.review_id == review_id).all()
+    study = match_study(text, file.filename or "", studies)
+    if not study:
+        return {"matched": False, "filename": file.filename,
+                "message": f"{file.filename}: no se encontró el artículo por DOI, PMID ni título; súbelo desde su fila."}
+    _store_full_text(study, text, file.filename or "")
+    db.commit()
+    return {"matched": True, "filename": file.filename, "study_id": study.id,
+            "study": study.study_label or study.title, "chars": len(text)}
+
+
+@router.post("/{study_id}/fulltext", response_model=StudyOut)
+async def upload_full_text(review_id: int, study_id: int, file: UploadFile = File(...),
+                           db: Session = Depends(get_db)):
+    """Attach a full-text PDF to one record (only its extracted text is stored)."""
+    study = db.query(Study).filter(Study.id == study_id, Study.review_id == review_id).first()
+    if not study:
+        raise HTTPException(status_code=404, detail="Study not found")
+    _store_full_text(study, await _read_pdf(file), file.filename or "")
+    db.commit()
+    db.refresh(study)
+    return study
+
+
+@router.delete("/{study_id}/fulltext", response_model=StudyOut)
+def delete_full_text(review_id: int, study_id: int, db: Session = Depends(get_db)):
+    study = db.query(Study).filter(Study.id == study_id, Study.review_id == review_id).first()
+    if not study:
+        raise HTTPException(status_code=404, detail="Study not found")
+    study.full_text = None
+    study.full_text_filename = None
+    db.commit()
+    db.refresh(study)
+    return study
 
 
 @router.get("/{study_id}", response_model=StudyOut)

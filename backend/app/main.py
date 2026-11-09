@@ -53,6 +53,8 @@ def _migrate_db():
         ("center_type", "VARCHAR(10)"),
         ("center_evidence", "TEXT"),
         ("ai_screening_note", "TEXT"),
+        ("full_text", "TEXT"),
+        ("full_text_filename", "VARCHAR(300)"),
     ]
     new_search_cols = [
         ("source_type", "VARCHAR(20) DEFAULT 'database'"),

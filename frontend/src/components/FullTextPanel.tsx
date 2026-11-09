@@ -1,8 +1,13 @@
 import { useMemo, useState } from 'react'
-import { FileSearch, ChevronDown, ChevronUp, ExternalLink, Copy, Download, CheckCircle2, XCircle } from 'lucide-react'
+import {
+  FileSearch, ChevronDown, ChevronUp, ExternalLink, Copy, Download, CheckCircle2, XCircle, Upload, FileText,
+  Trash2, Wand2, Loader2,
+} from 'lucide-react'
 import toast from 'react-hot-toast'
 import { useMutation, useQueryClient } from '@tanstack/react-query'
-import { setScreeningDecision, type Study } from '../services/api'
+import {
+  setScreeningDecision, uploadFullText, uploadFullTextMatched, deleteFullText, aiFullTextScreen, type Study,
+} from '../services/api'
 import { decisionOf } from './ReferenceManager'
 
 interface Props {
@@ -55,6 +60,77 @@ export default function FullTextPanel({ reviewId, studies }: Props) {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['review', reviewId] }),
     onError: (e: any) => toast.error(e.response?.data?.detail || 'Error al guardar'),
   })
+
+  const refresh = () => qc.invalidateQueries({ queryKey: ['review', reviewId] })
+  const [busy, setBusy] = useState<string | null>(null)
+  const withPdf = pending.filter(s => s.full_text_filename && s.screening_stage !== 'full_text').length
+
+  const errorText = (e: any) => e.response?.data?.detail || e.message || 'Error'
+
+  const uploadOne = async (s: Study, file: File) => {
+    setBusy(`row-${s.id}`)
+    try {
+      await uploadFullText(reviewId, s.id, file)
+      toast.success(`PDF cargado: ${file.name}`)
+    } catch (e: any) {
+      toast.error(errorText(e))
+    } finally {
+      setBusy(null)
+      refresh()
+    }
+  }
+
+  const uploadMany = async (files: FileList) => {
+    const list = Array.from(files)
+    setBusy('bulk')
+    const unmatched: string[] = []
+    let matched = 0
+    for (const [i, f] of list.entries()) {
+      toast.loading(`Leyendo PDF ${i + 1} de ${list.length}: ${f.name}`, { id: 'pdf-upload' })
+      try {
+        const res = await uploadFullTextMatched(reviewId, f)
+        if (res.matched) matched++
+        else unmatched.push(f.name)
+      } catch (e: any) {
+        unmatched.push(`${f.name} (${errorText(e)})`)
+      }
+    }
+    setBusy(null)
+    refresh()
+    toast.success(`${matched} de ${list.length} PDFs asignados a su artículo.`, { id: 'pdf-upload', duration: 8000 })
+    if (unmatched.length) {
+      toast.error(`Sin asignar (súbelos desde la fila del artículo):\n${unmatched.join('\n')}`, { duration: 15000 })
+    }
+  }
+
+  const removePdf = async (s: Study) => {
+    if (!confirm(`¿Quitar el PDF «${s.full_text_filename}»?`)) return
+    try { await deleteFullText(reviewId, s.id) } catch (e: any) { toast.error(errorText(e)) }
+    refresh()
+  }
+
+  const analyze = async () => {
+    setBusy('ai')
+    const t = { screened: 0, included: 0, excluded: 0, uncertain: 0 }
+    try {
+      while (true) {
+        const res = await aiFullTextScreen(reviewId)
+        t.screened += res.screened; t.included += res.included; t.excluded += res.excluded; t.uncertain += res.uncertain
+        refresh()
+        toast.loading(`Analizando textos completos: ${t.screened} listos, quedan ${res.remaining}...`, { id: 'ft-ai' })
+        if (res.remaining === 0 || res.screened === 0) break
+      }
+      toast.success(
+        `Texto completo analizado: ${t.screened} artículos — ${t.included} incluidos, ${t.excluded} excluidos, ` +
+        `${t.uncertain} sin datos suficientes.`, { id: 'ft-ai', duration: 12000 },
+      )
+    } catch (e: any) {
+      toast.error(`${errorText(e)} — lo analizado quedó guardado; vuelve a pulsar para continuar.`, { id: 'ft-ai' })
+    } finally {
+      setBusy(null)
+      refresh()
+    }
+  }
 
   const exclude = (s: Study) => {
     const reason = prompt(`Motivo de exclusión a texto completo para «${s.study_label || s.title}»:`, pendingCriterion(s))
@@ -117,6 +193,32 @@ export default function FullTextPanel({ reviewId, studies }: Props) {
             <p className="text-sm text-gray-500">No hay artículos pendientes de revisión a texto completo.</p>
           ) : (
             <>
+              <div className="rounded-lg border border-cochrane-100 bg-cochrane-50/50 p-3 space-y-2">
+                <p className="text-xs text-gray-700">
+                  <strong>1.</strong> Sube los PDF (puedes seleccionar varios a la vez: cada uno se asigna a su artículo
+                  por DOI, PMID o título). Solo se guarda el texto, sin la lista de referencias.{' '}
+                  <strong>2.</strong> Pulsa «Analizar con IA»: decide incluir o excluir con el texto completo. Después,
+                  la extracción de datos y el riesgo de sesgo del pipeline también usarán el texto completo.
+                </p>
+                <div className="flex flex-wrap gap-2">
+                  <label className={`btn-primary text-xs cursor-pointer ${busy ? 'opacity-50 pointer-events-none' : ''}`}>
+                    {busy === 'bulk' ? <Loader2 size={14} className="animate-spin" /> : <Upload size={14} />}
+                    Subir PDFs (varios)
+                    <input
+                      type="file"
+                      accept="application/pdf,.pdf"
+                      multiple
+                      className="hidden"
+                      onChange={e => { if (e.target.files?.length) uploadMany(e.target.files); e.target.value = '' }}
+                    />
+                  </label>
+                  <button type="button" onClick={analyze} disabled={!!busy || withPdf === 0} className="btn-primary text-xs">
+                    {busy === 'ai' ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} />}
+                    Analizar con IA ({withPdf} PDF{withPdf === 1 ? '' : 's'} sin analizar)
+                  </button>
+                </div>
+              </div>
+
               <div className="flex flex-wrap gap-2">
                 <button type="button" onClick={copyDois} className="btn-secondary text-xs">
                   <Copy size={14} /> Copiar DOIs (para Zotero)
@@ -160,6 +262,30 @@ export default function FullTextPanel({ reviewId, studies }: Props) {
                           {l.label} <ExternalLink size={11} />
                         </a>
                       ))}
+                    </div>
+
+                    <div className="flex flex-wrap items-center gap-2 mt-2 text-xs">
+                      {s.full_text_filename ? (
+                        <>
+                          <span className="inline-flex items-center gap-1 text-green-700">
+                            <FileText size={12} /> {s.full_text_filename}
+                            {s.screening_stage === 'full_text' ? ' — analizado por IA' : ' — pendiente de analizar'}
+                          </span>
+                          <button type="button" onClick={() => removePdf(s)} title="Quitar PDF"
+                                  className="text-gray-400 hover:text-red-600"><Trash2 size={12} /></button>
+                        </>
+                      ) : (
+                        <label className={`inline-flex items-center gap-1 px-2 py-1 rounded border border-gray-200 text-gray-600 hover:bg-gray-50 cursor-pointer ${busy ? 'opacity-50 pointer-events-none' : ''}`}>
+                          {busy === `row-${s.id}` ? <Loader2 size={12} className="animate-spin" /> : <Upload size={12} />}
+                          Subir PDF
+                          <input
+                            type="file"
+                            accept="application/pdf,.pdf"
+                            className="hidden"
+                            onChange={e => { const f = e.target.files?.[0]; if (f) uploadOne(s, f); e.target.value = '' }}
+                          />
+                        </label>
+                      )}
                     </div>
 
                     <div className="flex gap-2 mt-2">

@@ -148,6 +148,7 @@ export interface Study {
   center_type: 'single' | 'multi' | 'unclear' | null
   center_evidence: string | null
   ai_screening_note?: string | null
+  full_text_filename?: string | null
 }
 
 export interface SearchSource {
@@ -336,6 +337,26 @@ export const aiScreenStudies = (reviewId: number, opts?: { reasons?: string[]; l
     duplicates: number; screened: number; remaining: number; skipped_already_reviewed: number
   }>(
     `/reviews/${reviewId}/analysis/ai-screen`, { limit: SCREEN_LOT_SIZE, ...opts },
+  ).then(r => r.data)
+
+// Full-text PDFs: the server keeps only their text (reference list removed) for the AI.
+export const uploadFullText = (reviewId: number, studyId: number, file: File) => {
+  const form = new FormData()
+  form.append('file', file)
+  return api.post<Study>(`/reviews/${reviewId}/studies/${studyId}/fulltext`, form).then(r => r.data)
+}
+export const uploadFullTextMatched = (reviewId: number, file: File) => {
+  const form = new FormData()
+  form.append('file', file)
+  return api.post<{ matched: boolean; filename: string; study?: string; message?: string }>(
+    `/reviews/${reviewId}/studies/fulltext-match`, form,
+  ).then(r => r.data)
+}
+export const deleteFullText = (reviewId: number, studyId: number) =>
+  api.delete<Study>(`/reviews/${reviewId}/studies/${studyId}/fulltext`).then(r => r.data)
+export const aiFullTextScreen = (reviewId: number, reasons?: string[]) =>
+  api.post<{ message: string; included: number; excluded: number; uncertain: number; screened: number; remaining: number }>(
+    `/reviews/${reviewId}/analysis/ai-fulltext-screen`, { reasons },
   ).then(r => r.data)
 
 export const prefilterExclude = (reviewId: number) =>

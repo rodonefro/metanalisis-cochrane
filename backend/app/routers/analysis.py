@@ -16,7 +16,7 @@ from ..services.eligibility import eligible_studies, pending_count, find_duplica
 from ..services.plots import _short_label
 from ..services.relevance import concepts_for, rank_by_relevance
 from ..services.ai_generator import (
-    screen_studies_with_ai, extract_quantitative_data, eligibility_block,
+    screen_studies_with_ai, screen_full_text_with_ai, extract_quantitative_data, eligibility_block,
     assess_risk_of_bias, ROB_DOMAIN_KEYS, classify_center_type,
     interpret_forest_plot, interpret_funnel_plot, interpret_grade_table, interpret_rob_plot,
 )
@@ -567,7 +567,75 @@ def ai_screen_studies(review_id: int, payload: ScreenRequest | None = Body(None)
     }
 
 
-PREFILTER_REASON = "Prefiltro automático: baja relevancia para los criterios (no evaluado por IA)"
+FULLTEXT_CALL_LIMIT = 5   # full texts are long: few per request keeps each call well under timeouts
+
+
+def _awaiting_full_text_review(s: Study) -> bool:
+    """A "maybe" record with an uploaded full text that the AI has not judged at full text yet."""
+    maybe = s.screening_decision == "maybe" or (
+        s.screening_reviewed and not s.included
+        and (s.exclusion_reason or "").startswith("Requiere revisión a texto completo"))
+    return maybe and bool(s.full_text) and s.screening_stage != "full_text"
+
+
+@router.post("/ai-fulltext-screen")
+def ai_fulltext_screen(review_id: int, payload: ScreenRequest | None = Body(None), db: Session = Depends(get_db)):
+    """Full-text eligibility, by AI, of "maybe" records whose PDF was uploaded (a few per call)."""
+    review = db.query(Review).filter(Review.id == review_id).first()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+    payload = payload or ScreenRequest()
+    reasons = [r.strip() for r in (payload.reasons or []) if r and r.strip()] or None
+    waiting = [s for s in db.query(Study).filter(Study.review_id == review_id).order_by(Study.id).all()
+               if _awaiting_full_text_review(s)]
+    if not waiting:
+        return {"message": "No hay PDFs pendientes de analizar.", "included": 0, "excluded": 0,
+                "uncertain": 0, "screened": 0, "remaining": 0}
+    review_dict = {c.name: getattr(review, c.name) for c in review.__table__.columns}
+
+    counts: Counter = Counter()
+    error = None
+    for study in waiting[:FULLTEXT_CALL_LIMIT]:
+        try:
+            d = screen_full_text_with_ai(
+                review_dict, {c.name: getattr(study, c.name) for c in study.__table__.columns}, reasons)
+        except Exception as exc:
+            error = exc
+            break
+        study.screening_stage = "full_text"
+        study.full_text_status = "retrieved"
+        study.ai_screening_note = f"Texto completo: {d['reason']}"
+        if d["decision"] == "include":
+            study.included, study.screening_decision, study.exclusion_reason = True, "include", None
+            study.analysis_suitability = None if d["suitability"] == "not_applicable" else d["suitability"]
+            study.suitability_note = d["suitability_note"] or None
+            counts["included"] += 1
+        elif d["decision"] == "exclude":
+            study.included, study.screening_decision = False, "exclude"
+            study.exclusion_reason = _decision_reason(d, bool(reasons))
+            counts["excluded"] += 1
+        else:
+            study.included, study.screening_decision = False, "maybe"
+            study.exclusion_reason = f"Sin datos suficientes en el texto completo — {d['criterion']}"
+            counts["uncertain"] += 1
+        study.screening_reviewed = True
+        db.commit()
+
+    screened = sum(counts.values())
+    if error is not None and not screened:
+        raise HTTPException(status_code=500, detail=f"Error al analizar el texto completo: {error}")
+    remaining = len(waiting) - screened
+    return {
+        "message": (f"Texto completo analizado: {screened} artículos — {counts['included']} incluidos, "
+                    f"{counts['excluded']} excluidos, {counts['uncertain']} sin datos suficientes"
+                    + (f". Se interrumpió por un error ({error})" if error else "")
+                    + (f". Quedan {remaining} PDFs por analizar." if remaining else ".")),
+        "included": counts["included"], "excluded": counts["excluded"], "uncertain": counts["uncertain"],
+        "screened": screened, "remaining": remaining,
+    }
+
+
+PREFILTER_REASON ="Prefiltro automático: baja relevancia para los criterios (no evaluado por IA)"
 
 
 @router.post("/prefilter-exclude")

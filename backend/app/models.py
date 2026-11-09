@@ -221,6 +221,9 @@ class Study(Base):
     center_evidence = Column(Text, nullable=True)
     # The AI screener's explanation of its include/exclude decision.
     ai_screening_note = Column(Text, nullable=True)
+    # Text extracted from the uploaded full-text PDF (reference list removed); the PDF itself is not stored
+    full_text = Column(Text, nullable=True)
+    full_text_filename = Column(String(300), nullable=True)
 
     review = relationship("Review", back_populates="studies")
 

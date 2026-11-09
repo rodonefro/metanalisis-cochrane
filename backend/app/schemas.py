@@ -85,6 +85,7 @@ class StudyBase(BaseModel):
     center_type: Optional[str] = None
     center_evidence: Optional[str] = None
     ai_screening_note: Optional[str] = None
+    full_text_filename: Optional[str] = None   # the extracted text itself is never sent to the browser
 
 
 class StudyCreate(StudyBase):
