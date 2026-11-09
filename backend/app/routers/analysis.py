@@ -14,6 +14,7 @@ from ..services.plots import generate_forest_plot, generate_funnel_plot, generat
 from ..services.prisma import sync_prisma, prisma_plot_kwargs
 from ..services.eligibility import eligible_studies, pending_count, find_duplicates
 from ..services.plots import _short_label
+from ..services.relevance import concepts_for, rank_by_relevance
 from ..services.ai_generator import (
     screen_studies_with_ai, extract_quantitative_data, eligibility_block,
     assess_risk_of_bias, ROB_DOMAIN_KEYS, classify_center_type,
@@ -497,7 +498,10 @@ def ai_screen_studies(review_id: int, payload: ScreenRequest | None = Body(None)
     pending_studies = [s for s in pending_studies if s.id not in duplicates]
     db.commit()
     if not payload.study_ids:
-        pending_studies = pending_studies[:max(1, min(payload.limit or SCREEN_LOT_SIZE, 500))]
+        # Most relevant records first (local ranking, no AI per record).
+        ranked = rank_by_relevance(pending_studies, concepts_for(review))
+        db.commit()
+        pending_studies = [s for s, _ in ranked][:max(1, min(payload.limit or SCREEN_LOT_SIZE, 500))]
 
     counts: Counter = Counter()
     error = None
@@ -560,6 +564,37 @@ def ai_screen_studies(review_id: int, payload: ScreenRequest | None = Body(None)
         "screened": screened,
         "remaining": remaining,
         "skipped_already_reviewed": already_reviewed,
+    }
+
+
+PREFILTER_REASON = "Prefiltro automático: baja relevancia para los criterios (no evaluado por IA)"
+
+
+@router.post("/prefilter-exclude")
+def prefilter_exclude(review_id: int, db: Session = Depends(get_db)):
+    """Close an automatic screening run: the records still pending rank below every record the
+    AI screened (whose last lots no longer found eligible records), so they are excluded at
+    title/abstract without AI, with a traceable reason and their relevance score."""
+    review = db.query(Review).filter(Review.id == review_id).first()
+    if not review:
+        raise HTTPException(status_code=404, detail="Review not found")
+    pending = db.query(Study).filter(Study.review_id == review_id,
+                                     Study.screening_reviewed == False).all()  # noqa: E712
+    if not pending:
+        return {"message": "No quedan registros pendientes.", "excluded": 0}
+    ranked = rank_by_relevance(pending, concepts_for(review))
+    for rank, (study, score) in enumerate(ranked, start=1):
+        study.included = False
+        study.screening_decision = "exclude"
+        study.screening_stage = "title_abstract"
+        study.screening_reviewed = True
+        study.exclusion_reason = PREFILTER_REASON
+        study.ai_screening_note = (f"Puntaje de relevancia {score:.2f} (posición {rank} de {len(ranked)} "
+                                   "entre los no cribados por IA).")
+    db.commit()
+    return {
+        "message": f"{len(ranked)} registros de baja relevancia excluidos por el prefiltro automático, sin IA.",
+        "excluded": len(ranked),
     }
 
 

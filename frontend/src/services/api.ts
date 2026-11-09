@@ -338,6 +338,54 @@ export const aiScreenStudies = (reviewId: number, opts?: { reasons?: string[]; l
     `/reviews/${reviewId}/analysis/ai-screen`, { limit: SCREEN_LOT_SIZE, ...opts },
   ).then(r => r.data)
 
+export const prefilterExclude = (reviewId: number) =>
+  api.post<{ message: string; excluded: number }>(`/reviews/${reviewId}/analysis/prefilter-exclude`).then(r => r.data)
+
+// Automatic screening: the server hands out pending records from most to least relevant, so the
+// AI screens lots until it has seen at least AUTO_SCREEN_MIN records and a whole lot brings no
+// eligible or uncertain record; the remaining low-relevance tail is excluded by the prefilter
+// without AI. A run never sends more than AUTO_SCREEN_MAX records to the AI.
+export const AUTO_SCREEN_MIN = 200
+export const AUTO_SCREEN_MAX = 1000
+export interface AutoScreenResult {
+  message: string; screened: number; included: number; excluded: number; uncertain: number
+  quantitative: number; duplicates: number; prefiltered: number; remaining: number
+}
+export async function screenAutomatically(
+  reviewId: number,
+  opts?: { reasons?: string[]; onProgress?: (text: string) => void },
+): Promise<AutoScreenResult> {
+  const t = { screened: 0, included: 0, excluded: 0, uncertain: 0, quantitative: 0, duplicates: 0 }
+  let remaining = 0
+  while (true) {
+    const res = await aiScreenStudies(reviewId, { reasons: opts?.reasons })
+    for (const k of Object.keys(t) as (keyof typeof t)[]) t[k] += res[k]
+    remaining = res.remaining
+    opts?.onProgress?.(
+      `Cribados ${t.screened} de los más relevantes — ${t.included} incluidos, ` +
+      `${t.uncertain} a texto completo (quedan ${remaining})`,
+    )
+    if (remaining === 0 || res.screened === 0 || t.screened >= AUTO_SCREEN_MAX) break
+    if (t.screened >= AUTO_SCREEN_MIN && res.included + res.uncertain === 0) break
+  }
+  const exhausted = remaining > 0 && t.screened >= AUTO_SCREEN_MAX
+  let prefiltered = 0
+  if (remaining > 0 && !exhausted) {
+    prefiltered = (await prefilterExclude(reviewId)).excluded
+    remaining = 0
+  }
+  const message =
+    `Cribado automático: la IA revisó los ${t.screened} registros más relevantes — ${t.included} incluidos ` +
+    `(${t.quantitative} con datos cuantitativos), ${t.excluded} excluidos, ${t.uncertain} a texto completo` +
+    (t.duplicates ? `; ${t.duplicates} duplicados` : '') +
+    (prefiltered ? `; ${prefiltered} de baja relevancia excluidos por el prefiltro, sin IA.` : '.') +
+    (exhausted
+      ? ` Se alcanzó el máximo de ${AUTO_SCREEN_MAX} por corrida y aún aparecen estudios elegibles: ` +
+        `vuelve a ejecutarlo para continuar (quedan ${remaining}).`
+      : '')
+  return { message, ...t, prefiltered, remaining }
+}
+
 export interface ScreeningSuggestion {
   decision: 'include' | 'exclude' | 'maybe'
   reason: string | null

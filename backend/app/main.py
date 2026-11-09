@@ -78,6 +78,7 @@ def _migrate_db():
         ("prospero_json", "TEXT"),
         ("prospero_question_hash", "VARCHAR(64)"),
         ("custom_exclusion_reasons", "TEXT"),
+        ("relevance_terms", "TEXT"),
     ]
 
     inspector = sa_inspect(engine)

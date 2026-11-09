@@ -91,6 +91,8 @@ class Review(Base):
 
     # JSON list of exclusion reasons the author added during screening (reused as options).
     custom_exclusion_reasons = Column(Text, nullable=True)
+    # {"key": hash of the eligibility criteria, "concepts": [[search terms], ...]} for relevance ranking
+    relevance_terms = Column(Text, nullable=True)
 
     studies = relationship("Study", back_populates="review", cascade="all, delete-orphan")
     analyses = relationship("Analysis", back_populates="review", cascade="all, delete-orphan")

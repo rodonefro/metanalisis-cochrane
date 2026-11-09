@@ -6,7 +6,7 @@ import {
 import toast from 'react-hot-toast'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import {
-  importReferences, exportReferences, setScreeningDecision, listSearches, getReview, updateReview, aiScreenStudies, SCREEN_LOT_SIZE, suggestScreening,
+  importReferences, exportReferences, setScreeningDecision, listSearches, getReview, updateReview, screenAutomatically, SCREEN_LOT_SIZE, AUTO_SCREEN_MIN, AUTO_SCREEN_MAX, suggestScreening,
   type Study, type SearchSource, type ScreeningSuggestion,
 } from '../services/api'
 import { exclusionReasonGroups, loadCustomReasons, parseCriteria } from './screeningReasons'
@@ -397,15 +397,25 @@ export function ScreeningModal({
   const screenPendingWithAi = async () => {
     const pending = studies.filter(s => decisionOf(s) === null).length
     if (!pending) { toast('No hay registros pendientes de cribar.'); return }
-    const lot = Math.min(SCREEN_LOT_SIZE, pending)
-    if (!confirm(`¿Cribar con IA los siguientes ${lot} de ${pending} registros pendientes? La IA decide incluir / quizás / excluir con los motivos de tu lista; solo esos ${lot} se envían a la IA, las decisiones ya tomadas no se modifican y después puedes revisarlas aquí.`)) return
+    if (!confirm(
+      `¿Cribado automático de los ${pending} registros pendientes? La IA revisa por lotes de ${SCREEN_LOT_SIZE}, ` +
+      `de los más relevantes a los menos, y decide incluir / quizás / excluir con los motivos de tu lista. Revisa al ` +
+      `menos ${AUTO_SCREEN_MIN} y se detiene cuando un lote completo ya no trae registros elegibles (máximo ` +
+      `${AUTO_SCREEN_MAX}); los restantes, de baja relevancia, se excluyen con el motivo «Prefiltro automático» sin ` +
+      `usar IA. Las decisiones ya tomadas no se modifican y después puedes revisarlas aquí.`
+    )) return
     setBulkScreening(true)
     try {
-      const res = await aiScreenStudies(reviewId, { reasons: allReasons })
+      const res = await screenAutomatically(reviewId, {
+        reasons: allReasons,
+        onProgress: text => { toast.loading(text, { id: 'auto-screen' }); onChanged() },
+      })
       onChanged()
-      toast.success(res.message, { duration: 8000 })
+      toast.success(res.message, { id: 'auto-screen', duration: 15000 })
     } catch (e: any) {
-      toast.error(e.response?.data?.detail || 'Error en el cribado con IA')
+      onChanged()
+      toast.error((e.response?.data?.detail || 'Error en el cribado con IA') +
+        ' — lo cribado quedó guardado; vuelve a pulsar el botón para continuar.', { id: 'auto-screen' })
     } finally {
       setBulkScreening(false)
     }
